@@ -192,17 +192,36 @@ test('3. Citações [1][2] viram links de rodapé e páginas não obtidas nunca 
   ];
 
   // Se o LLM tentar citar [9] (inexistente) ou [1, 2], sanitizeCitations limpa [9] e normaliza [1][2]
-  const rawMd = 'O modo WAL permite leituras concorrentes com escritas [1][2] e evita bloqueios [9].';
+  const rawMd = [
+    'O modo **WAL** permite leituras concorrentes com escritas [1][2] e evita bloqueios [9].',
+    '## Cronologia e Comparativo',
+    '- **8:46 a. m.**: Evento inicial verificado [1]',
+    '',
+    '| Modo | Concorrência | Fonte |',
+    '| --- | --- | --- |',
+    '| WAL | Alta [1] | SQLite [2] |'
+  ].join('\n');
   const html = renderAnswerMarkdownWithFootnotes(rawMd, 77, sources);
 
+  assert.match(html, /class="top-sources-strip"/);
+  assert.match(html, /class="top-source-card /);
   assert.match(html, /href="#source-77-1"/);
   assert.match(html, /href="#source-77-2"/);
+  assert.match(html, /class="citation-host">sqlite\.org<\/span>/);
+  assert.match(html, /<h4 class="answer-heading">Cronologia e Comparativo<\/h4>/);
+  assert.match(html, /<table class="answer-table">/);
   assert.doesNotMatch(html, /\[9\]/);
   assert.doesNotMatch(html, /source-77-9/);
 
-  const footnotesHtml = renderTurnSourcesFootnotes(77, sources, { status: 'completed' });
+  const footnotesHtml = renderTurnSourcesFootnotes(77, sources, {
+    status: 'completed',
+    question: '11 de septiembre 2001'
+  });
   assert.match(footnotesHtml, /id="source-77-1"/);
   assert.match(footnotesHtml, /id="source-77-2"/);
+  assert.match(footnotesHtml, /data-copy-turn="77"/);
+  assert.match(footnotesHtml, /class="followup-chip"/);
+  assert.match(footnotesHtml, /11 de septiembre 2001/);
   assert.match(footnotesHtml, /https:\/\/sqlite\.org\/wal\.html/);
   assert.match(footnotesHtml, /https:\/\/htmx\.org\/docs\//);
 });

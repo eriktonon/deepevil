@@ -614,39 +614,294 @@ body {
   margin: 0 0 16px;
 }
 
-/* Citações Inline [1][2] com Azul Google (#8AB4F8 / #4285F4) */
+/* Faixa Horizontal Superior de Fontes Verificadas (Perplexity Sources Strip) */
+.top-sources-strip {
+  margin: 0 0 18px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background-color: var(--bg-canvas);
+  border: 1px solid var(--border-subtle);
+}
+
+.top-sources-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 11.5px;
+  font-family: var(--font-mono);
+}
+
+.top-sources-label {
+  font-weight: 600;
+  color: var(--text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.top-sources-sub {
+  color: var(--text-muted);
+}
+
+.top-sources-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(175px, 1fr));
+  gap: 8px;
+}
+
+.top-source-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-top-width: 2px;
+  text-decoration: none;
+  transition: background-color 140ms ease, border-color 140ms ease, transform 120ms ease;
+}
+
+.top-source-card.g-top-blue { border-top-color: var(--g-blue); }
+.top-source-card.g-top-red { border-top-color: var(--g-red); }
+.top-source-card.g-top-yellow { border-top-color: var(--g-yellow); }
+.top-source-card.g-top-green { border-top-color: var(--g-green); }
+
+.top-source-card:hover {
+  background-color: var(--bg-elevated);
+  border-color: var(--g-blue-light);
+  transform: translateY(-1px);
+}
+
+.top-source-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+
+.top-source-badge {
+  color: var(--g-blue-light);
+  font-weight: 700;
+}
+
+.top-source-domain {
+  color: var(--g-green);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.top-source-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Tabelas Markdown e Blockquotes */
+.answer-table-wrap {
+  margin: 0 0 16px;
+  overflow-x: auto;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+}
+
+.answer-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+  background-color: var(--bg-canvas);
+}
+
+.answer-table th,
+.answer-table td {
+  padding: 9px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.answer-table th {
+  background-color: var(--bg-elevated);
+  color: var(--g-blue-light);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.answer-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.answer-blockquote {
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  border-left: 3px solid var(--g-yellow);
+  background-color: var(--bg-canvas);
+  border-radius: 0 8px 8px 0;
+  color: var(--text-secondary);
+  font-size: 14.5px;
+}
+
+/* Citações Inline [1] domain com Azul Google (#8AB4F8 / #4285F4) */
 .footnote-ref {
   line-height: 0;
-  margin: 0 1px;
+  margin: 0 2px;
 }
 
 .citation-link {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  padding: 1px 6px;
+  gap: 4px;
+  padding: 1px 7px;
   margin: 0 1px;
-  border-radius: 5px;
-  background-color: rgba(66, 133, 244, 0.16);
-  border: 1px solid rgba(138, 180, 248, 0.42);
+  border-radius: 999px;
+  background-color: rgba(66, 133, 244, 0.14);
+  border: 1px solid rgba(138, 180, 248, 0.38);
   color: var(--g-blue-light);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   text-decoration: none;
-  transition: background-color 140ms ease, color 140ms ease, transform 120ms ease;
+  transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+
+.citation-host {
+  font-weight: 500;
+  color: var(--text-secondary);
+  max-width: 115px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .citation-link:hover,
 .citation-link:focus-visible {
   background-color: var(--g-blue);
+  border-color: var(--g-blue-light);
   color: #ffffff;
+}
+
+.citation-link:hover .citation-host,
+.citation-link:focus-visible .citation-host {
+  color: #ffffff;
+}
+
+/* Barra de Ações da Resposta & Sugestões de Follow-up Contextual */
+.turn-action-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border-subtle);
+}
+
+.turn-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  background-color: var(--bg-canvas);
+  border: 1px solid var(--border-strong);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-decoration: none;
+  cursor: pointer;
+  transition: border-color 140ms ease, color 140ms ease, background-color 140ms ease;
+}
+
+.turn-action-btn:hover {
+  border-color: var(--g-blue-light);
+  color: var(--text-primary);
+  background-color: var(--bg-elevated);
+}
+
+.turn-action-pill {
+  margin-left: auto;
+  font-size: 11.5px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+
+.turn-followups {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background-color: var(--bg-canvas);
+  border: 1px solid var(--border-subtle);
+}
+
+.followups-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  color: var(--g-blue-light);
+}
+
+.followups-title {
+  margin: 0;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.followups-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.followup-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  cursor: pointer;
+  transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease;
+}
+
+.followup-chip:hover {
+  background-color: var(--bg-elevated);
+  border-color: var(--g-blue);
+  color: var(--g-blue-light);
+}
+
+.followup-chip-arrow {
+  font-family: var(--font-mono);
+  color: var(--g-blue-light);
+  flex-shrink: 0;
 }
 
 /* Rodapé de Fontes Estilo Resultados Orgânicos do Google SERP */
 .turn-footnotes {
-  margin-top: 22px;
+  margin-top: 18px;
   padding-top: 16px;
   border-top: 1px solid var(--border-subtle);
 }

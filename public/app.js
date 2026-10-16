@@ -74,8 +74,29 @@
       return;
     }
 
-    // 4. Destaque visual suave ao clicar numa citação [1] de rodapé
-    const citationLink = event.target.closest('.citation-link');
+    // 4. Botão "Copiar" resposta
+    const copyBtn = event.target.closest('[data-copy-turn]');
+    if (copyBtn) {
+      const turnId = copyBtn.getAttribute('data-copy-turn');
+      const proseEl = document.getElementById(`answer-prose-${turnId}`) || document.getElementById(`turn-answer-${turnId}`);
+      if (proseEl && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        const textToCopy = (proseEl.innerText || proseEl.textContent || '').trim();
+        navigator.clipboard.writeText(textToCopy).then(() => {
+          const labelEl = copyBtn.querySelector('.copy-btn-label');
+          if (labelEl) {
+            const orig = labelEl.textContent;
+            labelEl.textContent = 'Copiado ✓';
+            setTimeout(() => {
+              labelEl.textContent = orig;
+            }, 1800);
+          }
+        }).catch(() => {});
+      }
+      return;
+    }
+
+    // 5. Destaque visual suave ao clicar numa citação [1] de rodapé ou num card da faixa superior de fontes
+    const citationLink = event.target.closest('.citation-link, .top-source-card');
     if (citationLink) {
       const sourceId = citationLink.getAttribute('data-source-id');
       if (sourceId) {

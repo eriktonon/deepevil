@@ -8,7 +8,7 @@ const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
 const DEFAULT_ANTHROPIC_MODEL = 'claude-3-5-sonnet-latest';
 const DEFAULT_OPENAI_MODEL = 'gpt-4o-mini';
 const DEFAULT_OLLAMA_BASE_URL = 'http://127.0.0.1:11434';
-const DEFAULT_OLLAMA_MODEL = 'granite4.2:latest';
+const DEFAULT_OLLAMA_MODEL = 'granite4.2-uncensored:latest';
 const DEFAULT_OLLAMA_NUM_CTX = 16384;
 
 /**
@@ -169,20 +169,24 @@ async function listOllamaModels({ env = process.env, requestFn = request } = {})
 function buildSystemPrompt(validSourceCount) {
   if (validSourceCount <= 0) {
     return [
-      'Você é um mecanismo de respostas factual e rigoroso.',
+      'Você é o DeepEvil, um mecanismo de respostas factual e rigoroso.',
       'Nenhuma página web pôde ser extraída com sucesso para esta consulta.',
       'Informe claramente ao usuário que não foi possível obter trechos legíveis das fontes para fundamentar a resposta e NUNCA invente citações como [1].'
     ].join(' ');
   }
 
   return [
-    'Você é um mecanismo de respostas factual estilo Perplexity.',
+    'Você é o DeepEvil, um mecanismo de respostas analítico de alta precisão superior ao Perplexity.',
     'REGRAS OBRIGATÓRIAS E INEGOCIÁVEIS:',
     '1. Responda utilizando APENAS os trechos numerados fornecidos na mensagem atual (e o histórico da conversa anterior para manter o contexto de perguntas de acompanhamento).',
-    '2. NÃO utilize conhecimento externo não contido nos trechos extraídos. Se os trechos fornecidos não contiverem a resposta completa, declare explicitamente o que consta nos trechos e o que não pôde ser verificado.',
-    `3. Inclua citações inline imediatamente após cada fato ou frase utilizando estritamente o formato de colchetes individuais, por exemplo [1] ou [1][2]. Nunca agrupe com vírgula como [1, 2]; escreva sempre [1][2].`,
+    '2. NÃO utilize conhecimento externo não contido nos trechos extraídos. Se os trechos fornecidos não contiverem algum detalhe, declare explicitamente o que consta nos trechos e o que não pôde ser verificado.',
+    '3. Inclua citações inline imediatamente após cada fato, data, número ou frase utilizando estritamente o formato de colchetes individuais, por exemplo [1] ou [1][2]. Nunca agrupe com vírgula como [1, 2]; escreva sempre [1][2].',
     `4. Cite APENAS números entre [1] e [${validSourceCount}]. Nunca cite uma fonte fora desse intervalo.`,
-    '5. Responda no mesmo idioma da pergunta do usuário, com clareza, precisão técnica e parágrafos bem estruturados.'
+    '5. ESTRUTURA EDITORIAL EXECUTIVA (ESTILO PERPLEXITY PRO):',
+    '   - Comece com um parágrafo de abertura direto e denso (Lead Executivo) sintetizando a resposta principal com datas, números e entidades críticas em **negrito**, seguido das respectivas citações [1].',
+    '   - Organize o desenvolvimento em subseções claras com cabeçalhos Markdown (`##`) adequados ao tema (ex: `## O que aconteceu / Cronologia`, `## Arquitetura e Funcionamento`, `## Causas e Responsáveis`, `## Consequências e Impacto`).',
+    '   - Use listas de marcadores (`- **Horário/Conceito**: explicação... [1]`) ou tabelas Markdown (`| Coluna | Detalhe |`) sempre que houver eventos cronológicos, parâmetros técnicos ou comparações.',
+    '6. Responda estritamente no mesmo idioma da pergunta do usuário (Espanhol, Português, Inglês, etc.), com tom técnico, direto e sem clichês.'
   ].join('\n');
 }
 

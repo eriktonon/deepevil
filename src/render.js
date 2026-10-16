@@ -19,10 +19,63 @@ function renderDeepEvilLogo(sizeClass = 'logo-md') {
   return `<span class="deepevil-wordmark ${escapeHtml(sizeClass)}" aria-label="DeepEvil"><span class="g-blue">D</span><span class="g-red">e</span><span class="g-yellow">e</span><span class="g-blue">p</span><span class="g-green">E</span><span class="g-red">v</span><span class="g-yellow">i</span><span class="g-blue">l</span></span>`;
 }
 
+function formatShortDomain(domain = '') {
+  return String(domain || '')
+    .trim()
+    .replace(/^www\./i, '')
+    .slice(0, 28);
+}
+
+/**
+ * Renderiza a faixa horizontal superior de cards de fontes (estilo Perplexity Sources Strip)
+ * logo acima da síntese executiva, conectada às notas de rodapé (#source-{turnId}-{idx}).
+ */
+function renderTopSourcesStrip(turnId, sources = []) {
+  if (!Array.isArray(sources) || sources.length === 0) {
+    return '';
+  }
+
+  const cardsHtml = sources
+    .map((src) => {
+      const idx = src.citationIndex;
+      const shortHost = formatShortDomain(src.domain);
+      const colorCycle = ['g-top-blue', 'g-top-red', 'g-top-yellow', 'g-top-green'][(idx - 1) % 4];
+      return `
+        <a
+          href="#source-${turnId}-${idx}"
+          class="top-source-card ${colorCycle}"
+          data-source-id="source-${turnId}-${idx}"
+          title="${escapeHtml(`[${idx}] ${src.title} (${src.domain})`)}"
+        >
+          <span class="top-source-card-head">
+            <span class="top-source-badge tabular-nums">[${idx}]</span>
+            <span class="top-source-domain">${escapeHtml(shortHost)}</span>
+          </span>
+          <span class="top-source-title">${escapeHtml(src.title)}</span>
+        </a>
+      `;
+    })
+    .join('');
+
+  return `
+    <div class="top-sources-strip" aria-label="Fontes verificadas da resposta">
+      <div class="top-sources-header">
+        <span class="top-sources-label">
+          <span class="g-green">●</span> Fontes Verificadas (${sources.length})
+        </span>
+        <span class="top-sources-sub">Readability DOM · Clique para inspecionar rodapé</span>
+      </div>
+      <div class="top-sources-grid">
+        ${cardsHtml}
+      </div>
+    </div>
+  `;
+}
+
 /**
  * Converte Markdown da resposta do LLM em HTML seguro e transforma todas as
  * citações [1][2] em links de rodapé clicáveis (#source-{turnId}-{index})
- * apontando para a lista de fontes abaixo da resposta.
+ * com badge do domínio confiável e faixa superior de cards de fontes.
  *
  * Nunca gera link para uma fonte que não esteja presente em `sources`.
  */
@@ -56,11 +109,17 @@ function renderAnswerMarkdownWithFootnotes(markdownText, turnId, sources = []) {
     return renderMarkdownProse(segment, turnId, validSourcesMap, seenFirstRef);
   });
 
-  return htmlSegments.join('\n');
+  const topStripHtml = renderTopSourcesStrip(turnId, sources);
+  return `${topStripHtml}\n<div class="answer-prose-content" id="answer-prose-${turnId}">${htmlSegments.join('\n')}</div>`;
 }
 
 function renderMarkdownProse(prose, turnId, validSourcesMap, seenFirstRef) {
-  const blocks = prose
+  // Garante que cabeçalhos Markdown (# .. ####) fiquem sempre em seu próprio bloco mesmo se o LLM usar quebra simples
+  const normalizedProse = String(prose || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/^(#{1,4}\s+[^\n]+)$/gm, '\n\n$1\n\n');
+
+  const blocks = normalizedProse
     .trim()
     .split(/\n{2,}/)
     .map((b) => b.trim())
@@ -68,26 +127,70 @@ function renderMarkdownProse(prose, turnId, validSourcesMap, seenFirstRef) {
 
   return blocks
     .map((block) => {
-      if (/^#{1,4}\s+/.test(block)) {
-        const match = block.match(/^(#{1,4})\s+(.*)$/);
-        const level = Math.min(match[1].length + 2, 5);
-        return `<h${level} class="answer-heading">${formatInlineMarkdownAndCitations(match[2], turnId, validSourcesMap, seenFirstRef)}</h${level}>`;
+      const headingMatch = block.match(/^(#{1,4})\s+([\s\S]*)$/);
+      if (headingMatch) {
+        const level = Math.min(headingMatch[1].length + 2, 5);
+        return `<h${level} class="answer-heading">${formatInlineMarkdownAndCitations(headingMatch[2].trim(), turnId, validSourcesMap, seenFirstRef)}</h${level}>`;
       }
 
-      const lines = block.split('\n').map((l) => l.trim());
-      const isUnorderedList = lines.every((l) => /^[-*]\s+/.test(l));
-      if (isUnorderedList && lines.length > 0) {
+      const lines = block.split('\n').map((l) => l.trim()).filter(Boolean);
+
+      // Suporte a Tabelas Markdown (| Coluna 1 | Coluna 2 |)
+      const isTable =
+        lines.length >= 2 &&
+        lines.every((l) => l.includes('|')) &&
+        lines.some((l) => /^\|?[\s:-]+\|[\s|:-]*$/.test(l));
+      if (isTable) {
+        const parseRow = (rowStr) =>
+          rowStr
+            .replace(/^\|/, '')
+            .replace(/\|$/, '')
+            .split('|')
+            .map((cell) => cell.trim());
+
+        const headerCells = parseRow(lines[0]);
+        const bodyRows = lines
+          .slice(1)
+          .filter((l) => !/^\|?[\s:-]+\|[\s|:-]*$/.test(l))
+          .map(parseRow);
+
+        const theadHtml = `<thead><tr>${headerCells
+          .map((c) => `<th>${formatInlineMarkdownAndCitations(c, turnId, validSourcesMap, seenFirstRef)}</th>`)
+          .join('')}</tr></thead>`;
+        const tbodyHtml = `<tbody>${bodyRows
+          .map(
+            (row) =>
+              `<tr>${row
+                .map((c) => `<td>${formatInlineMarkdownAndCitations(c, turnId, validSourcesMap, seenFirstRef)}</td>`)
+                .join('')}</tr>`
+          )
+          .join('')}</tbody>`;
+        return `<div class="answer-table-wrap"><table class="answer-table">${theadHtml}${tbodyHtml}</table></div>`;
+      }
+
+      // Suporte a Blockquote (> texto)
+      const isBlockquote = lines.length > 0 && lines.every((l) => /^>\s*/.test(l));
+      if (isBlockquote) {
+        const quoteLines = lines
+          .map((l) => l.replace(/^>\s*/, ''))
+          .map((l) => formatInlineMarkdownAndCitations(l, turnId, validSourcesMap, seenFirstRef))
+          .join('<br>');
+        return `<blockquote class="answer-blockquote">${quoteLines}</blockquote>`;
+      }
+
+      const isUnorderedList = lines.length > 0 && lines.every((l) => /^[-*•]\s+/.test(l));
+      if (isUnorderedList) {
         const items = lines
-          .map((l) => l.replace(/^[-*]\s+/, ''))
+          .map((l) => l.replace(/^[-*•]\s+/, ''))
           .map((item) => `<li>${formatInlineMarkdownAndCitations(item, turnId, validSourcesMap, seenFirstRef)}</li>`)
           .join('');
         return `<ul class="answer-list">${items}</ul>`;
       }
 
-      const isOrderedList = lines.every((l) => /^\d+\.\s+/.test(l));
-      if (isOrderedList && lines.length > 0) {
+      const isOrderedList = lines.length > 0 && lines.every((l) => /^\d+[.)]\s+/.test(l));
+      if (isOrderedList) {
         const items = lines
-          .map((l) => l.replace(/^\d+\.\s+/, ''))
+          .map((l) => l.replace(/^\d+[.)]\s+/, ''))
           .map((item) => `<li>${formatInlineMarkdownAndCitations(item, turnId, validSourcesMap, seenFirstRef)}</li>`)
           .join('');
         return `<ol class="answer-list answer-list-ordered">${items}</ol>`;
@@ -113,7 +216,7 @@ function formatInlineMarkdownAndCitations(text, turnId, validSourcesMap, seenFir
   // Italic *text*
   escaped = escaped.replace(/(^|[^*])\*([^*]+)\*(?!\*)/g, '$1<em>$2</em>');
 
-  // Citações [1][2] -> Links de rodapé <sup class="footnote-ref"><a href="#source-{turnId}-{n}">[n]</a></sup>
+  // Citações [1][2] -> Links de rodapé com pílula de domínio confiável estilo Perplexity ([1] domain)
   escaped = escaped.replace(/\[(\d+)\]/g, (full, numStr) => {
     const idx = Number(numStr);
     const src = validSourcesMap.get(idx);
@@ -125,15 +228,60 @@ function formatInlineMarkdownAndCitations(text, turnId, validSourcesMap, seenFir
       : '';
     seenFirstRef.add(idx);
 
+    const shortHost = formatShortDomain(src.domain);
     const tooltip = `[${idx}] ${src.title} — ${src.domain}`;
-    return `<sup class="footnote-ref"><a href="#source-${turnId}-${idx}"${refIdAttr} class="citation-link" data-source-id="source-${turnId}-${idx}" title="${escapeHtml(tooltip)}">[${idx}]</a></sup>`;
+    const hostBadge = shortHost ? `<span class="citation-host">${escapeHtml(shortHost)}</span>` : '';
+    return `<sup class="footnote-ref"><a href="#source-${turnId}-${idx}"${refIdAttr} class="citation-link" data-source-id="source-${turnId}-${idx}" title="${escapeHtml(tooltip)}">[${idx}]${hostBadge}</a></sup>`;
   });
 
   return escaped;
 }
 
 /**
- * Renderiza a lista completa de fontes abaixo de cada resposta no estilo Google SERP Hacker.
+ * Gera perguntas de acompanhamento (Follow-up) contextuais no idioma da consulta
+ * e ancoradas nos títulos das fontes extraídas (estilo Perplexity "Relacionadas").
+ */
+function buildContextualFollowUps(question = '', sources = []) {
+  const q = String(question || '').trim();
+  const lowerQ = q.toLowerCase();
+  const isSpanish =
+    /\b(septiembre|qué|cómo|cuáles|atentado|español|historia|cuándo|dónde|por qué)\b/i.test(lowerQ) ||
+    sources.some((s) => /\b(espanol|elpais|bbc\.com\/mundo|infobae|rtve)\b/i.test(String(s.url || '')));
+  const isEnglish =
+    !isSpanish &&
+    /\b(what|how|why|when|where|architecture|performance|explained|between)\b/i.test(lowerQ);
+
+  const topic = q.length > 58 ? `${q.slice(0, 55).trim()}…` : (q || 'este tema');
+
+  if (isSpanish) {
+    return [
+      `¿Cuáles fueron las consecuencias políticas y de seguridad a largo plazo de ${topic}?`,
+      `¿Cuál es la cronología detallada y los hechos clave verificados sobre ${topic}?`,
+      `¿Qué investigaciones oficiales y medidas se tomaron tras ${topic}?`,
+      `¿Cómo impactó ${topic} en la geopolítica y la regulación internacional?`
+    ];
+  }
+
+  if (isEnglish) {
+    return [
+      `What are the key architectural trade-offs and edge cases of ${topic}?`,
+      `How does ${topic} compare in real-world benchmarks and production workloads?`,
+      `What are the security implications and failure modes of ${topic}?`,
+      `Can you show a step-by-step technical breakdown of ${topic}?`
+    ];
+  }
+
+  return [
+    `Quais são os detalhes técnicos mais críticos e a cronologia completa sobre ${topic}?`,
+    `Quais foram as consequências práticas e o impacto de longo prazo de ${topic}?`,
+    `Como as diferentes fontes extraídas comparam as causas e desdobramentos de ${topic}?`,
+    `Quais pontos de atenção, falhas ou vulnerabilidades existem em torno de ${topic}?`
+  ];
+}
+
+/**
+ * Renderiza a barra de ações da resposta, sugestões de acompanhamento (Follow-up)
+ * e a lista completa de fontes abaixo de cada resposta no estilo Google SERP Hacker.
  */
 function renderTurnSourcesFootnotes(turnId, sources = [], meta = {}) {
   if (!sources || sources.length === 0) {
@@ -153,6 +301,52 @@ function renderTurnSourcesFootnotes(turnId, sources = [], meta = {}) {
       </footer>
     `;
   }
+
+  const followUps = meta.status === 'completed' ? buildContextualFollowUps(meta.question || '', sources) : [];
+  const followUpsHtml =
+    followUps.length > 0
+      ? `
+        <section class="turn-followups" aria-label="Perguntas de acompanhamento sugeridas">
+          <div class="followups-header">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="9 18 15 12 9 6"></polyline>
+            </svg>
+            <h4 class="followups-title">Explorar Acompanhamento (Follow-up Contextual)</h4>
+          </div>
+          <div class="followups-list">
+            ${followUps
+              .map(
+                (fq) => `
+              <button type="button" class="followup-chip" data-suggest="${escapeHtml(fq)}">
+                <span class="followup-chip-text">${escapeHtml(fq)}</span>
+                <span class="followup-chip-arrow" aria-hidden="true">↵</span>
+              </button>
+            `
+              )
+              .join('')}
+          </div>
+        </section>
+      `
+      : '';
+
+  const actionToolbarHtml = `
+    <div class="turn-action-bar" aria-label="Ações da resposta">
+      <button type="button" class="turn-action-btn" data-copy-turn="${turnId}" title="Copiar resposta para a área de transferência">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+        </svg>
+        <span class="copy-btn-label">Copiar</span>
+      </button>
+      <a href="#source-${turnId}-1" class="turn-action-btn" title="Rolar para as notas de rodapé verificadas">
+        <span class="g-blue">●</span>
+        <span>${sources.length} ${sources.length === 1 ? 'fonte verificada' : 'fontes verificadas'}</span>
+      </a>
+      <span class="turn-action-pill">
+        <span class="g-green">●</span> Qdrant Vector Synced
+      </span>
+    </div>
+  `;
 
   const itemsHtml = sources
     .map((src) => {
@@ -195,6 +389,8 @@ function renderTurnSourcesFootnotes(turnId, sources = [], meta = {}) {
     .join('\n');
 
   return `
+    ${actionToolbarHtml}
+    ${followUpsHtml}
     <footer class="turn-footnotes" aria-label="Fontes e notas de rodapé da resposta">
       <div class="footnotes-header">
         <div class="footnotes-heading-wrap">
@@ -265,7 +461,10 @@ function renderTurnCard(turn, options = {}) {
       ? `<div class="turn-error-box" role="alert"><strong>[KERNEL_PANIC] Falha na síntese:</strong> ${escapeHtml(turn.error_message)}</div>`
       : renderAnswerMarkdownWithFootnotes(turn.answer_markdown, turn.id, sources);
 
-  const sourcesHtml = renderTurnSourcesFootnotes(turn.id, sources, { status: turn.status });
+  const sourcesHtml = renderTurnSourcesFootnotes(turn.id, sources, {
+    status: turn.status,
+    question: turn.question
+  });
 
   const innerContent = isLive
     ? `

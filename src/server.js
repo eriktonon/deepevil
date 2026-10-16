@@ -303,7 +303,7 @@ function createApp(options = {}) {
           errorMessage: turn.error_message
         })
       );
-      writeSseToRes(res, 'sources', renderTurnSourcesFootnotes(turn.id, turn.sources || [], { status: turn.status }));
+      writeSseToRes(res, 'sources', renderTurnSourcesFootnotes(turn.id, turn.sources || [], { status: turn.status, question: turn.question }));
       writeSseToRes(res, 'answer', renderAnswerMarkdownWithFootnotes(turn.answer_markdown, turn.id, turn.sources || []));
       writeSseToRes(res, 'done', 'closed');
       res.end();
@@ -394,7 +394,7 @@ function createApp(options = {}) {
       // Envia imediatamente a lista completa de fontes obtidas com sucesso para o rodapé da resposta
       broadcastSse(
         'sources',
-        renderTurnSourcesFootnotes(turn.id, validSources, { status: 'streaming' })
+        renderTurnSourcesFootnotes(turn.id, validSources, { status: 'streaming', question: turn.question })
       );
 
       const llmConfig = resolveLlmConfig(env, turn.model);
@@ -453,7 +453,7 @@ function createApp(options = {}) {
       );
       broadcastSse(
         'sources',
-        renderTurnSourcesFootnotes(turn.id, validSources, { status: 'completed' })
+        renderTurnSourcesFootnotes(turn.id, validSources, { status: 'completed', question: turn.question })
       );
       broadcastSse(
         'status',
