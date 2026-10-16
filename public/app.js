@@ -44,12 +44,12 @@
       const textarea = document.getElementById('question-input');
       const form = document.getElementById('ask-form');
       if (textarea && form && suggestion) {
+        chip.classList.add('is-triggered');
         textarea.value = suggestion;
-        textarea.focus();
-        if (typeof form.requestSubmit === 'function') {
-          form.requestSubmit();
-        } else if (window.htmx) {
+        if (window.htmx) {
           window.htmx.trigger(form, 'submit');
+        } else if (typeof form.requestSubmit === 'function') {
+          form.requestSubmit();
         }
       }
       return;
@@ -233,6 +233,14 @@
   // 5. Garante que qualquer container de streaming recém-injetado conecte via SSE
   const activeStreams = new Set();
 
+  function scrollTurnToTop(turnId) {
+    const turnCard = document.getElementById(`turn-${turnId}`);
+    if (!turnCard) return;
+    const rect = turnCard.getBoundingClientRect();
+    const targetY = Math.max(0, window.scrollY + rect.top - 18);
+    window.scrollTo({ top: targetY, behavior: 'smooth' });
+  }
+
   function ensureLiveStreamsConnected(root) {
     const containers = (root || document).querySelectorAll('[data-stream-turn]');
     containers.forEach((container) => {
@@ -241,9 +249,15 @@
 
       activeStreams.add(turnId);
 
+      // Rola imediatamente até o novo turno e reforça após os swaps OOB do HTMX
+      scrollTurnToTop(turnId);
+      setTimeout(() => scrollTurnToTop(turnId), 80);
+      setTimeout(() => scrollTurnToTop(turnId), 260);
+
       const statusSlot = document.getElementById(`turn-status-${turnId}`);
       const answerSlot = document.getElementById(`turn-answer-${turnId}`);
       const sourcesSlot = document.getElementById(`turn-sources-${turnId}`);
+      let scrolledOnContent = false;
 
       const es = new EventSource(`/stream/${encodeURIComponent(turnId)}`);
 
@@ -252,14 +266,28 @@
       });
 
       es.addEventListener('sources', (e) => {
-        if (sourcesSlot && e.data) sourcesSlot.innerHTML = e.data;
+        if (sourcesSlot && e.data) {
+          sourcesSlot.innerHTML = e.data;
+          if (!scrolledOnContent) {
+            scrolledOnContent = true;
+            scrollTurnToTop(turnId);
+          }
+        }
       });
 
       es.addEventListener('answer', (e) => {
-        if (answerSlot && e.data) answerSlot.innerHTML = e.data;
+        if (answerSlot && e.data) {
+          answerSlot.innerHTML = e.data;
+          if (!scrolledOnContent) {
+            scrolledOnContent = true;
+            scrollTurnToTop(turnId);
+          }
+        }
       });
 
       es.addEventListener('done', () => {
+        const turnCard = document.getElementById(`turn-${turnId}`);
+        if (turnCard) turnCard.classList.remove('turn-card-live');
         es.close();
       });
 
