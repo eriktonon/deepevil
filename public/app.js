@@ -118,7 +118,7 @@
 
       translateBtn.disabled = true;
       translateBtn.classList.add('is-translating');
-      if (labelEl) labelEl.textContent = 'Traduzindo (GPU stream)…';
+      if (labelEl) labelEl.textContent = 'Traduzindo…';
 
       const finishTranslation = (ok, meta) => {
         translateBtn.disabled = false;
@@ -127,7 +127,7 @@
           if (restoreBtn) restoreBtn.hidden = false;
           if (labelEl) {
             if (meta && meta.cached) {
-              labelEl.textContent = `Traduzido (${targetLang}) · cache 0ms ⚡`;
+              labelEl.textContent = `Traduzido (${targetLang}) · cache 0ms`;
             } else if (meta && typeof meta.durationMs === 'number') {
               labelEl.textContent = `Traduzido (${targetLang}) · ${(meta.durationMs / 1000).toFixed(1)}s`;
             } else {
@@ -204,7 +204,7 @@
         restoreBtn.hidden = true;
         if (translateBtn) {
           const labelEl = translateBtn.querySelector('.translate-btn-label');
-          if (labelEl) labelEl.textContent = 'Traduzir com IA';
+          if (labelEl) labelEl.textContent = 'Traduzir';
         }
       }
       return;

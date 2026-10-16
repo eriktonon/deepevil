@@ -345,10 +345,6 @@ function renderTurnSourcesFootnotes(turnId, sources = [], meta = {}) {
   const actionToolbarHtml = `
     <div class="turn-action-bar" aria-label="Ações da resposta">
       <button type="button" class="turn-action-btn" data-copy-turn="${turnId}" title="Copiar resposta para a área de transferência">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-        </svg>
         <span class="copy-btn-label">Copiar</span>
       </button>
 
@@ -359,15 +355,10 @@ function renderTurnSourcesFootnotes(turnId, sources = [], meta = {}) {
         data-export-turn="${turnId}"
         title="Baixar dossiê completo em Markdown (.md) com citações e notas de rodapé verificadas"
       >
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-          <polyline points="7 10 12 15 17 10"></polyline>
-          <line x1="12" y1="15" x2="12" y2="3"></line>
-        </svg>
         <span>Exportar .md</span>
       </a>
 
-      <div class="turn-translate-group" role="group" aria-label="Traduzir resposta com IA">
+      <div class="turn-translate-group" role="group" aria-label="Traduzir resposta">
         <label for="translate-lang-${turnId}" class="sr-only">Idioma para tradução</label>
         <select id="translate-lang-${turnId}" class="turn-translate-select" title="Selecionar idioma de destino">
           <option value="pt-BR">Português (BR)</option>
@@ -380,14 +371,9 @@ function renderTurnSourcesFootnotes(turnId, sources = [], meta = {}) {
           type="button"
           class="turn-action-btn turn-translate-btn"
           data-translate-turn="${turnId}"
-          title="Traduzir esta resposta com IA preservando as citações [1][2]"
+          title="Traduzir esta resposta preservando as citações [1][2]"
         >
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <circle cx="12" cy="12" r="10"></circle>
-            <line x1="2" y1="12" x2="22" y2="12"></line>
-            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
-          </svg>
-          <span class="translate-btn-label">Traduzir com IA</span>
+          <span class="translate-btn-label">Traduzir</span>
         </button>
         <button
           type="button"
@@ -405,9 +391,6 @@ function renderTurnSourcesFootnotes(turnId, sources = [], meta = {}) {
         <span class="g-blue">●</span>
         <span>${sources.length} ${sources.length === 1 ? 'fonte verificada' : 'fontes verificadas'}</span>
       </a>
-      <span class="turn-action-pill">
-        <span class="g-green">●</span> Qdrant Vector Synced
-      </span>
     </div>
   `;
 
@@ -592,7 +575,7 @@ function renderSidebarConversations(conversations = [], activeConversationId = n
     return `
       <nav id="sidebar-conversations" class="sidebar-nav"${oobAttr} aria-label="Conversas anteriores">
         <div class="sidebar-empty">
-          <code>[0x00]</code> Nenhuma thread gravada no SQLite. Dispare uma busca no terminal ao lado.
+          <code>[0x00]</code> Nenhuma pesquisa registrada. Dispare uma busca no terminal ao lado.
         </div>
       </nav>
     `;
@@ -625,7 +608,7 @@ function renderSidebarConversations(conversations = [], activeConversationId = n
             hx-target="#sidebar-conversations"
             hx-swap="outerHTML"
             aria-label="Excluir conversa: ${escapeHtml(conv.title)}"
-            title="Purgar log SQLite"
+            title="Excluir conversa"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M3 6h18"></path>
@@ -752,7 +735,7 @@ function renderComposerForm(activeConversation = null, isOob = false, options = 
             type="button"
             id="feeling-lucky-btn"
             class="g-btn g-btn-lucky"
-            data-lucky-queries="Como funciona o isolamento de concorrência no SQLite em modo WAL?|Quais técnicas o Mozilla Readability usa para limpar o DOM de páginas web?|Como funcionam Server-Sent Events (SSE) sobre HTTP e por que são ideais para streaming de LLMs?|Arquitetura interna do motor V8 no Node.js e gerenciamento de memória do undici"
+            data-lucky-queries="Como funcionam rootkits de kernel Linux via ftrace e como detectá-los?|Quais técnicas o Mozilla Readability usa para limpar o DOM de páginas web?|Como funcionam Server-Sent Events (SSE) sobre HTTP e por que são ideais para streaming?|Arquitetura interna do motor V8 no Node.js e gerenciamento de memória do undici"
           >
             Estou com sorte
           </button>
@@ -780,11 +763,11 @@ function renderMainStage(activeConversation = null, envStatus = {}) {
         </h1>
 
         <div class="hero-suggestions" aria-label="Sugestões rápidas de pesquisa">
-          <button type="button" class="suggestion-chip" data-suggest="Como funciona o SQLite em modo WAL e por que ele permite leituras concorrentes rápidas?">
-            <span class="g-blue">●</span> SQLite WAL concurrency internals
+          <button type="button" class="suggestion-chip" data-suggest="Como funcionam rootkits de kernel Linux via ftrace e como detectá-los?">
+            <span class="g-blue">●</span> Linux Kernel ftrace &amp; syscall hooks
           </button>
-          <button type="button" class="suggestion-chip" data-suggest="Quais as diferenças práticas entre Server-Sent Events (SSE) e WebSockets para streaming de LLMs?">
-            <span class="g-red">●</span> SSE vs WebSockets LLM streaming
+          <button type="button" class="suggestion-chip" data-suggest="Quais as diferenças práticas entre Server-Sent Events (SSE) e WebSockets para streaming de baixa latência?">
+            <span class="g-red">●</span> SSE vs WebSockets low-latency streaming
           </button>
           <button type="button" class="suggestion-chip" data-suggest="Como o Mozilla Readability identifica o conteúdo principal de um artigo HTML?">
             <span class="g-green">●</span> Mozilla Readability DOM algorithm
@@ -806,9 +789,6 @@ function renderMainStage(activeConversation = null, envStatus = {}) {
           <span class="serp-tab serp-tab-active">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
             Tudo
-          </span>
-          <span class="serp-tab">
-            <span class="g-green">●</span> Qdrant Vector DB + SQLite
           </span>
           <span class="serp-tab" id="top-bar-llm-badge">
             <span class="g-blue">●</span> Ollama (${escapeHtml(envStatus.model || 'granite4.2:latest')})
@@ -857,7 +837,7 @@ function renderFullPage({ conversations = [], activeConversation = null, envStat
 </head>
 <body>
   <div class="app-shell">
-    <!-- Barra Lateral: Histórico de Conversas (Qdrant Vector DB + SQLite WAL) -->
+    <!-- Barra Lateral: Histórico de Conversas -->
     <aside class="app-sidebar" aria-label="Histórico de conversas">
       <div class="google-four-color-bar" aria-hidden="true"></div>
       <div class="sidebar-header">
@@ -876,7 +856,6 @@ function renderFullPage({ conversations = [], activeConversation = null, envStat
           </span>
           <span class="brand-text">
             ${renderDeepEvilLogo('logo-sidebar')}
-            <small>qdrant.vector + sqlite.wal</small>
           </span>
         </a>
 
@@ -898,7 +877,6 @@ function renderFullPage({ conversations = [], activeConversation = null, envStat
 
       <div class="sidebar-section-label">
         <span>Histórico</span>
-        <span class="sidebar-hint">Qdrant + SQLite</span>
       </div>
 
       ${renderSidebarConversations(conversations, activeConversation?.id, false)}
@@ -909,7 +887,7 @@ function renderFullPage({ conversations = [], activeConversation = null, envStat
             <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
             <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
           </svg>
-          <span><code>127.0.0.1</code> · Qdrant Vector DB</span>
+          <span><code>127.0.0.1:3000</code></span>
         </div>
       </div>
     </aside>

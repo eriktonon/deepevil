@@ -755,30 +755,34 @@ body {
 
 /* Citações Inline [1] domain com Azul Google (#8AB4F8 / #4285F4) */
 .footnote-ref {
-  line-height: 0;
+  line-height: 1;
   margin: 0 2px;
+  vertical-align: baseline;
 }
 
 .citation-link {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 1px 7px;
+  padding: 2px 7px;
   margin: 0 1px;
+  line-height: 1.3;
   border-radius: 999px;
   background-color: rgba(66, 133, 244, 0.14);
   border: 1px solid rgba(138, 180, 248, 0.38);
   color: var(--g-blue-light);
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: 11px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   text-decoration: none;
+  vertical-align: middle;
   transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease;
 }
 
 .citation-host {
   font-weight: 500;
+  line-height: 1.3;
   color: var(--text-secondary);
   max-width: 115px;
   overflow: hidden;

@@ -333,7 +333,9 @@ test('4. Fluxo completo E2E (Express + htmx + SSE Streaming + SQLite + Follow-up
     assert.doesNotMatch(homeHtml, /A estética clássica do Google fundida/, 'O texto descritivo antigo deve ter sido removido');
     assert.match(homeHtml, /id="model-select"/);
     assert.match(homeHtml, /gemma4:31b/);
-    assert.match(homeHtml, /Qdrant Vector DB/);
+    assert.doesNotMatch(homeHtml, /Qdrant Vector DB/);
+    assert.doesNotMatch(homeHtml, /Qdrant \+ SQLite/);
+    assert.doesNotMatch(homeHtml, /qdrant\.vector \+ sqlite\.wal/);
 
     // 4.0b Verifica o endpoint /api/models que lista os modelos do Ollama
     const modelsRes = await fetch(`${baseUrl}/api/models`);
@@ -565,7 +567,9 @@ test('6. Botão de Tradução com IA (/turns/:turnId/translate) traduz o Markdow
   });
   assert.match(footnotesHtml, /data-translate-turn="1"/);
   assert.match(footnotesHtml, /id="translate-lang-1"/);
-  assert.match(footnotesHtml, /Traduzir com IA/);
+  assert.match(footnotesHtml, /Traduzir/);
+  assert.doesNotMatch(footnotesHtml, /Traduzir com IA/);
+  assert.doesNotMatch(footnotesHtml, /Qdrant Vector Synced/);
 
   let llmTranslateCalls = 0;
   const app = createApp({

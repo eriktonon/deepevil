@@ -216,7 +216,7 @@ function createApp(options = {}) {
     const badgeHtml = `
       <div class="translated-banner" role="status">
         <span class="g-yellow">●</span>
-        <span>Traduzido com IA para <strong>${escapeHtml(languageLabel)}</strong>${cacheTag}</span>
+        <span>Traduzido para <strong>${escapeHtml(languageLabel)}</strong>${cacheTag}</span>
         <span class="meta-sep" aria-hidden="true">·</span>
         <code>${escapeHtml(modelName || 'local')}</code>
       </div>
