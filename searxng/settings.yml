@@ -1,0 +1,19 @@
+use_default_settings: true
+
+general:
+  instance_name: "Perplexity Local SearXNG"
+  enable_metrics: false
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  default_lang: "all"
+  formats:
+    - html
+    - json
+
+server:
+  secret_key: "perplexity-local-homelab-secret-key-searxng"
+  limiter: false
+  image_proxy: false
+  method: "GET"

@@ -1,0 +1,214 @@
+'use strict';
+
+(function () {
+  // 1. Suporte de fallback caso field-sizing: content não esteja disponível
+  function bindTextareaAutoGrow(root) {
+    if (typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && CSS.supports('field-sizing', 'content')) {
+      return;
+    }
+    const wrappers = (root || document).querySelectorAll('.growable-textarea > textarea');
+    wrappers.forEach((textarea) => {
+      if (textarea.dataset.growBound) return;
+      textarea.dataset.growBound = '1';
+      textarea.addEventListener('input', () => {
+        if (textarea.parentNode) {
+          textarea.parentNode.dataset.replicatedValue = textarea.value;
+        }
+      });
+    });
+  }
+
+  // 2. Atalho Enter para submeter o formulário via htmx (Shift+Enter para nova linha)
+  document.addEventListener('keydown', (event) => {
+    const target = event.target;
+    if (!target || target.id !== 'question-input') return;
+
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      const form = target.closest('form');
+      if (form && target.value.trim().length > 0) {
+        if (typeof form.requestSubmit === 'function') {
+          form.requestSubmit();
+        } else if (window.htmx) {
+          window.htmx.trigger(form, 'submit');
+        }
+      }
+    }
+  });
+
+  // 3. Chips de sugestão de pesquisa, botão "Estou com Sorte // Root Dork" e destaque de citações
+  document.addEventListener('click', (event) => {
+    const chip = event.target.closest('[data-suggest]');
+    if (chip) {
+      const suggestion = chip.getAttribute('data-suggest');
+      const textarea = document.getElementById('question-input');
+      const form = document.getElementById('ask-form');
+      if (textarea && form && suggestion) {
+        textarea.value = suggestion;
+        textarea.focus();
+        if (typeof form.requestSubmit === 'function') {
+          form.requestSubmit();
+        } else if (window.htmx) {
+          window.htmx.trigger(form, 'submit');
+        }
+      }
+      return;
+    }
+
+    const luckyBtn = event.target.closest('#feeling-lucky-btn');
+    if (luckyBtn) {
+      const rawList = luckyBtn.getAttribute('data-lucky-queries') || '';
+      const options = rawList.split('|').map((s) => s.trim()).filter(Boolean);
+      const textarea = document.getElementById('question-input');
+      const form = document.getElementById('ask-form');
+      if (textarea && form && options.length > 0) {
+        const chosen = textarea.value.trim() || options[Math.floor(Math.random() * options.length)];
+        textarea.value = chosen;
+        textarea.focus();
+        if (typeof form.requestSubmit === 'function') {
+          form.requestSubmit();
+        } else if (window.htmx) {
+          window.htmx.trigger(form, 'submit');
+        }
+      }
+      return;
+    }
+
+    // 4. Destaque visual suave ao clicar numa citação [1] de rodapé
+    const citationLink = event.target.closest('.citation-link');
+    if (citationLink) {
+      const sourceId = citationLink.getAttribute('data-source-id');
+      if (sourceId) {
+        const targetEl = document.getElementById(sourceId);
+        if (targetEl) {
+          document.querySelectorAll('.footnote-highlighted').forEach((el) => {
+            el.classList.remove('footnote-highlighted');
+          });
+          targetEl.classList.add('footnote-highlighted');
+          const details = targetEl.querySelector('details');
+          if (details) {
+            details.open = true;
+          }
+        }
+      }
+    }
+  });
+
+  // 5. Garante que qualquer container de streaming recém-injetado conecte via SSE
+  const activeStreams = new Set();
+
+  function ensureLiveStreamsConnected(root) {
+    const containers = (root || document).querySelectorAll('[data-stream-turn]');
+    containers.forEach((container) => {
+      const turnId = container.getAttribute('data-stream-turn');
+      if (!turnId || activeStreams.has(turnId)) return;
+
+      activeStreams.add(turnId);
+
+      const statusSlot = document.getElementById(`turn-status-${turnId}`);
+      const answerSlot = document.getElementById(`turn-answer-${turnId}`);
+      const sourcesSlot = document.getElementById(`turn-sources-${turnId}`);
+
+      const es = new EventSource(`/stream/${encodeURIComponent(turnId)}`);
+
+      es.addEventListener('status', (e) => {
+        if (statusSlot && e.data) statusSlot.innerHTML = e.data;
+      });
+
+      es.addEventListener('sources', (e) => {
+        if (sourcesSlot && e.data) sourcesSlot.innerHTML = e.data;
+      });
+
+      es.addEventListener('answer', (e) => {
+        if (answerSlot && e.data) answerSlot.innerHTML = e.data;
+      });
+
+      es.addEventListener('done', () => {
+        es.close();
+      });
+
+      es.onerror = () => {
+        es.close();
+      };
+    });
+  }
+
+  // 6. Sincronização do seletor de LLM (Ollama) e atualização do badge superior
+  function syncModelSelector(root) {
+    const selectEl = (root || document).querySelector('#model-select');
+    if (!selectEl) return;
+
+    const savedModel = window.localStorage ? window.localStorage.getItem('deepevil_selected_model') : '';
+    if (savedModel) {
+      const hasOption = Array.from(selectEl.options).some((opt) => opt.value === savedModel);
+      if (hasOption) {
+        selectEl.value = savedModel;
+      }
+    }
+
+    const updateTopBadge = (modelName) => {
+      const topBadge = document.getElementById('top-bar-llm-badge');
+      if (topBadge && modelName) {
+        topBadge.innerHTML = `<span class="g-blue">●</span> Ollama (${modelName})`;
+      }
+    };
+
+    updateTopBadge(selectEl.value);
+
+    if (!selectEl.dataset.modelBound) {
+      selectEl.dataset.modelBound = '1';
+      selectEl.addEventListener('change', () => {
+        if (window.localStorage) {
+          window.localStorage.setItem('deepevil_selected_model', selectEl.value);
+        }
+        updateTopBadge(selectEl.value);
+      });
+    }
+  }
+
+  async function refreshOllamaModelsDropdown() {
+    try {
+      const res = await fetch('/api/models', { headers: { Accept: 'application/json' } });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data || !Array.isArray(data.models) || data.models.length === 0) return;
+
+      const selectEl = document.getElementById('model-select');
+      if (!selectEl) return;
+
+      const savedModel = (window.localStorage && window.localStorage.getItem('deepevil_selected_model')) || selectEl.value || data.defaultModel;
+
+      selectEl.innerHTML = data.models
+        .map((m) => {
+          const name = typeof m === 'string' ? m : m.name;
+          const rawBadge = typeof m === 'object' ? (m.parameterSize || (m.sizeGb ? (m.sizeGb === 'Cloud' ? 'Cloud' : `${m.sizeGb}GB`) : '')) : '';
+          const size = rawBadge ? ` (${rawBadge})` : '';
+          const selected = name === savedModel ? ' selected' : '';
+          return `<option value="${name}"${selected}>${name}${size}</option>`;
+        })
+        .join('');
+
+      syncModelSelector(document);
+    } catch (_) {
+      // Ignora silenciosamente se offline
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    bindTextareaAutoGrow(document);
+    syncModelSelector(document);
+    refreshOllamaModelsDropdown();
+    ensureLiveStreamsConnected(document);
+  });
+
+  document.body.addEventListener('htmx:afterSwap', (event) => {
+    bindTextareaAutoGrow(event.target);
+    syncModelSelector(document);
+    ensureLiveStreamsConnected(document);
+  });
+
+  document.body.addEventListener('htmx:oobAfterSwap', () => {
+    bindTextareaAutoGrow(document);
+    syncModelSelector(document);
+  });
+})();

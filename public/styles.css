@@ -1,0 +1,1113 @@
+/* ==========================================================================
+   DEEPEVIL — Google Hacker Edition (Answer Engine Localhost:3000)
+   Paleta Oficial 4-Cores Google (#4285F4, #EA4335, #FBBC05, #34A853)
+   sobre Terminal Obsidian (#101216 / #171717) · Sem CDNs externos · Anti-AI-Slop
+   ========================================================================== */
+
+:root {
+  /* Cores Oficiais Google */
+  --g-blue: #4285f4;
+  --g-blue-light: #8ab4f8;
+  --g-red: #ea4335;
+  --g-yellow: #fbbc05;
+  --g-green: #34a853;
+
+  /* Superfícies Google Dark + Hacker Terminal */
+  --bg-canvas: #101216;
+  --bg-sidebar: #14171d;
+  --bg-surface: #1b1f27;
+  --bg-elevated: #242934;
+  --bg-pill: #202124;
+  --bg-pill-hover: #282a2e;
+  --bg-code: #0b0d11;
+
+  --border-subtle: #2d3340;
+  --border-strong: #3c4043;
+  --text-primary: #e8eaed;
+  --text-secondary: #bdc1c6;
+  --text-muted: #9aa0a6;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--bg-canvas);
+  background-image:
+    radial-gradient(rgba(66, 133, 244, 0.045) 1px, transparent 1px),
+    radial-gradient(rgba(52, 168, 83, 0.035) 1px, var(--bg-canvas) 1px);
+  background-size: 32px 32px;
+  background-position: 0 0, 16px 16px;
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Classes Utilitárias das 4 Cores do Google */
+.g-blue { color: var(--g-blue) !important; }
+.g-red { color: var(--g-red) !important; }
+.g-yellow { color: var(--g-yellow) !important; }
+.g-green { color: var(--g-green) !important; }
+
+.g-bg-blue { background-color: var(--g-blue); }
+.g-bg-red { background-color: var(--g-red); }
+.g-bg-yellow { background-color: var(--g-yellow); }
+.g-bg-green { background-color: var(--g-green); }
+
+/* Barra Superior de 4 Cores do Google */
+.google-four-color-bar {
+  height: 3px;
+  width: 100%;
+  background: linear-gradient(
+    90deg,
+    var(--g-blue) 0% 25%,
+    var(--g-red) 25% 50%,
+    var(--g-yellow) 50% 75%,
+    var(--g-green) 75% 100%
+  );
+}
+
+/* Wordmark "DeepEvil" na Mesma Fonte e Cores do Google */
+.deepevil-wordmark {
+  font-family: "Product Sans", "Google Sans", "Arial", "Segoe UI", Roboto, sans-serif;
+  font-weight: 500;
+  letter-spacing: -0.03em;
+  display: inline-flex;
+  align-items: baseline;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+.deepevil-wordmark.logo-xl {
+  font-size: clamp(56px, 8vw, 88px);
+  line-height: 1.05;
+  letter-spacing: -0.035em;
+}
+
+.deepevil-wordmark.logo-sidebar {
+  font-size: 21px;
+  letter-spacing: -0.025em;
+}
+
+.deepevil-wordmark.logo-sm {
+  font-size: 24px;
+  letter-spacing: -0.025em;
+}
+
+/* Layout Principal: Barra Lateral + Palco Google SERP Hacker */
+.app-shell {
+  display: grid;
+  grid-template-columns: 290px minmax(0, 1fr);
+  min-height: 100dvh;
+}
+
+/* Barra Lateral (Conversas em SQLite identificadas pela 1ª pergunta) */
+.app-sidebar {
+  background-color: var(--bg-sidebar);
+  border-right: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  position: sticky;
+  top: 0;
+}
+
+.sidebar-header {
+  padding: 14px 14px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.brand-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  color: var(--text-primary);
+}
+
+.brand-mark {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  color: var(--g-green);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.brand-text small {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.new-thread-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: 999px;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: var(--font-mono);
+  text-decoration: none;
+  transition: background-color 150ms ease, border-color 150ms ease, transform 120ms ease;
+}
+
+.new-thread-btn:hover {
+  background-color: var(--bg-elevated);
+  border-color: var(--g-blue);
+  color: var(--g-blue-light);
+}
+
+.new-thread-btn:active {
+  transform: scale(0.98);
+}
+
+.sidebar-section-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.sidebar-hint {
+  font-size: 11px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  color: var(--g-yellow);
+}
+
+.sidebar-nav {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 10px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sidebar-empty {
+  padding: 14px 10px;
+  font-size: 12.5px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  border: 1px dashed var(--border-subtle);
+  border-radius: 8px;
+}
+
+.sidebar-empty code {
+  color: var(--g-green);
+}
+
+.sidebar-item-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  padding-right: 4px;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+.sidebar-item-row:hover {
+  background-color: var(--bg-surface);
+  border-color: var(--border-subtle);
+}
+
+.sidebar-item-row.sidebar-item-active {
+  background-color: var(--bg-elevated);
+  border-color: var(--g-blue);
+}
+
+.sidebar-item-link {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  text-decoration: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sidebar-item-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-item-meta {
+  font-size: 11.5px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+
+.sidebar-delete-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  opacity: 0.7;
+  transition: color 140ms ease, background-color 140ms ease, opacity 140ms ease;
+}
+
+.sidebar-delete-btn:hover {
+  opacity: 1;
+  color: var(--g-red);
+  background-color: rgba(234, 67, 53, 0.14);
+}
+
+.sidebar-footer {
+  padding: 12px 14px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.privacy-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+
+.privacy-badge code {
+  color: var(--g-green);
+}
+
+/* Palco Principal (SERP + Hero Google Hacker) */
+.app-main {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  max-width: 920px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+/* Barra Superior Estilo Google SERP */
+.google-top-serp-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border-subtle);
+  flex-wrap: wrap;
+}
+
+.serp-bar-left {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.serp-mini-logo {
+  text-decoration: none;
+}
+
+.serp-tabs {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.serp-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  padding: 4px 2px;
+}
+
+.serp-tab-active {
+  color: var(--g-blue-light);
+  border-bottom: 2px solid var(--g-blue);
+  font-weight: 600;
+}
+
+.env-pill {
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-family: var(--font-mono);
+}
+
+.pill-ok {
+  background-color: rgba(52, 168, 83, 0.14);
+  color: var(--g-green);
+  border: 1px solid rgba(52, 168, 83, 0.4);
+}
+
+.conversation-scroll {
+  flex: 1;
+  padding: 24px 0 32px;
+}
+
+/* Estado Inicial: Cara Limpa do Google (DeepEvil Centralizado) */
+.google-hacker-hero {
+  max-width: 70ch;
+  margin: 72px auto 28px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.google-hero-logo {
+  margin: 0 0 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.hero-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.suggestion-chip {
+  background-color: var(--bg-pill);
+  border: 1px solid var(--border-strong);
+  color: var(--text-secondary);
+  padding: 7px 14px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-family: var(--font-mono);
+  cursor: pointer;
+  transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease, transform 120ms ease;
+}
+
+.suggestion-chip:hover {
+  background-color: var(--bg-pill-hover);
+  border-color: var(--g-blue);
+  color: var(--text-primary);
+}
+
+.suggestion-chip:active {
+  transform: scale(0.98);
+}
+
+/* Turnos de Pergunta e Resposta (Cards Google AI Overview + Hacker Terminal) */
+.conversation-turns {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.turn-card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  overflow: hidden;
+  padding-bottom: 22px;
+}
+
+.turn-question-header {
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 18px 24px 14px;
+  margin-bottom: 16px;
+}
+
+.turn-question-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.turn-badge {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--g-green);
+}
+
+.turn-search-query {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--g-yellow);
+}
+
+.turn-question-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.35;
+  color: var(--text-primary);
+}
+
+.turn-status-slot,
+.turn-answer-body,
+.turn-sources-slot {
+  padding-left: 24px;
+  padding-right: 24px;
+}
+
+/* Status do Pipeline SSE */
+.pipeline-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 11px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  background-color: var(--bg-code);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+}
+
+.status-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: var(--g-yellow);
+}
+
+.status-active .status-indicator {
+  animation: statusPulse 1.1s infinite ease-in-out;
+}
+
+.status-completed .status-indicator {
+  background-color: var(--g-green);
+}
+
+.status-error .status-indicator {
+  background-color: var(--g-red);
+}
+
+@keyframes statusPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.85); }
+}
+
+/* Corpo da Resposta & Citações de Rodapé [1][2] */
+.turn-answer-body {
+  max-width: 74ch;
+  color: var(--text-primary);
+  font-size: 15.5px;
+  line-height: 1.72;
+}
+
+.answer-placeholder {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+}
+
+.answer-paragraph {
+  margin: 0 0 14px;
+}
+
+.answer-heading {
+  margin: 18px 0 8px;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--g-blue-light);
+}
+
+.answer-list {
+  margin: 0 0 14px;
+  padding-left: 22px;
+}
+
+.answer-list li {
+  margin-bottom: 6px;
+}
+
+.inline-code {
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  background-color: var(--bg-code);
+  color: var(--g-yellow);
+  padding: 2px 5px;
+  border-radius: 4px;
+  border: 1px solid var(--border-subtle);
+}
+
+.code-block {
+  background-color: var(--bg-code);
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--g-green);
+  border-radius: 8px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0 0 16px;
+}
+
+/* Citações Inline [1][2] com Azul Google (#8AB4F8 / #4285F4) */
+.footnote-ref {
+  line-height: 0;
+  margin: 0 1px;
+}
+
+.citation-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 6px;
+  margin: 0 1px;
+  border-radius: 5px;
+  background-color: rgba(66, 133, 244, 0.16);
+  border: 1px solid rgba(138, 180, 248, 0.42);
+  color: var(--g-blue-light);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-decoration: none;
+  transition: background-color 140ms ease, color 140ms ease, transform 120ms ease;
+}
+
+.citation-link:hover,
+.citation-link:focus-visible {
+  background-color: var(--g-blue);
+  color: #ffffff;
+}
+
+/* Rodapé de Fontes Estilo Resultados Orgânicos do Google SERP */
+.turn-footnotes {
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.footnotes-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.footnotes-heading-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--g-green);
+}
+
+.footnotes-title {
+  margin: 0;
+  font-size: 12.5px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.footnotes-count {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--g-yellow);
+}
+
+.footnotes-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.footnote-item {
+  background-color: var(--bg-canvas);
+  border: 1px solid var(--border-subtle);
+  border-left-width: 3px;
+  border-radius: 8px;
+  padding: 12px 14px;
+  transition: border-color 200ms ease, background-color 200ms ease;
+}
+
+.footnote-item.g-border-blue { border-left-color: var(--g-blue); }
+.footnote-item.g-border-red { border-left-color: var(--g-red); }
+.footnote-item.g-border-yellow { border-left-color: var(--g-yellow); }
+.footnote-item.g-border-green { border-left-color: var(--g-green); }
+
+.footnote-item:target,
+.footnote-item.footnote-highlighted {
+  border-color: var(--g-blue-light);
+  background-color: rgba(66, 133, 244, 0.09);
+}
+
+.footnote-item-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.footnote-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: 5px;
+  background-color: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  color: var(--g-blue-light);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-decoration: none;
+  flex-shrink: 0;
+}
+
+.footnote-title-group {
+  flex: 1;
+  min-width: 0;
+}
+
+.serp-cite-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  margin-bottom: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.serp-domain-host {
+  color: var(--g-green);
+  font-weight: 600;
+}
+
+.serp-url-path {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Título em Azul Clássico do Google Dark Mode (#8AB4F8) */
+.footnote-link {
+  color: var(--g-blue-light);
+  font-size: 15px;
+  font-weight: 500;
+  text-decoration: none;
+  display: inline-block;
+  line-height: 1.35;
+}
+
+.footnote-link:hover {
+  text-decoration: underline;
+}
+
+.footnote-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+
+.footnote-backlink {
+  color: var(--g-yellow);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.footnote-backlink:hover {
+  text-decoration: underline;
+}
+
+.footnote-excerpt-details {
+  margin-top: 8px;
+  padding-left: 38px;
+}
+
+.footnote-excerpt-summary {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.footnote-excerpt-summary:hover {
+  color: var(--g-green);
+}
+
+.footnote-excerpt-text {
+  margin: 8px 0 0;
+  padding: 8px 12px;
+  border-left: 2px solid var(--g-blue);
+  background-color: var(--bg-surface);
+  border-radius: 0 6px 6px 0;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+.sources-loading-skeleton,
+.footnotes-empty-notice {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background-color: var(--bg-canvas);
+  border: 1px dashed var(--border-subtle);
+  font-size: 12.5px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.turn-error-box {
+  padding: 12px 14px;
+  border-radius: 8px;
+  background-color: rgba(234, 67, 53, 0.14);
+  border: 1px solid rgba(234, 67, 53, 0.45);
+  color: #fca5a5;
+  font-size: 13.5px;
+  font-family: var(--font-mono);
+}
+
+/* ==========================================================================
+   BARRA DE BUSCA CÁPSULA DO GOOGLE (Google Pill Search Bar + Botões Clássicos)
+   ========================================================================== */
+.composer-region {
+  position: sticky;
+  bottom: 0;
+  padding: 12px 0 18px;
+  background: linear-gradient(to top, var(--bg-canvas) 82%, rgba(16, 18, 22, 0));
+}
+
+.composer-context-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 14px;
+  margin-bottom: 8px;
+  border-radius: 999px;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+}
+
+.g-dot-green {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: var(--g-green);
+  display: inline-block;
+}
+
+.context-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-reset-link {
+  color: var(--g-blue-light);
+  text-decoration: none;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.context-reset-link:hover {
+  text-decoration: underline;
+}
+
+.google-search-capsule {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.google-pill-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background-color: var(--bg-pill);
+  border: 1px solid var(--border-strong);
+  border-radius: 28px;
+  padding: 8px 10px 8px 18px;
+  transition: background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.google-pill-bar:hover,
+.google-pill-bar:focus-within {
+  background-color: var(--bg-pill-hover);
+  border-color: var(--g-blue);
+  box-shadow: 0 2px 12px rgba(66, 133, 244, 0.18);
+}
+
+.google-search-icon {
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.composer-input-wrap {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Modern Web Guidance: field-sizing: content */
+.composer-textarea {
+  field-sizing: content;
+  height: auto;
+  width: 100%;
+  min-block-size: 1.6lh;
+  max-block-size: 7lh;
+  background: transparent;
+  border: 0;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 14.5px;
+  line-height: 1.5;
+  resize: none;
+  outline: none;
+  padding: 4px 0;
+}
+
+.composer-textarea::placeholder {
+  color: var(--text-muted);
+}
+
+@supports not (field-sizing: content) {
+  .growable-textarea {
+    display: grid;
+  }
+  .growable-textarea::after,
+  .growable-textarea > textarea {
+    grid-area: 1 / 1 / 2 / 2;
+    font: inherit;
+    padding: 4px 0;
+  }
+  .growable-textarea::after {
+    content: attr(data-replicated-value) " ";
+    white-space: pre-wrap;
+    visibility: hidden;
+    max-height: 160px;
+    overflow: hidden;
+  }
+}
+
+/* Seletor de LLM (Ollama) na Barra do Google */
+.model-selector-wrap {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.google-model-select {
+  background-color: #303134;
+  border: 1px solid #3c4043;
+  border-radius: 999px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 6px 12px;
+  max-width: 220px;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 140ms ease, background-color 140ms ease;
+}
+
+.google-model-select:hover,
+.google-model-select:focus {
+  border-color: var(--g-blue-light);
+  background-color: #38393d;
+}
+
+.composer-submit-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(138, 180, 248, 0.4);
+  background-color: var(--g-blue);
+  color: #ffffff;
+  font-size: 13px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background-color 140ms ease, transform 120ms ease;
+}
+
+.composer-submit-btn:hover {
+  background-color: #3367d6;
+}
+
+.composer-submit-btn:active {
+  transform: scale(0.98);
+}
+
+/* Botões Clássicos Abaixo da Barra do Google ("Pesquisa DeepEvil" & "Estou com Sorte") */
+.google-classic-buttons {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.g-btn {
+  background-color: #303134;
+  border: 1px solid #3c4043;
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  padding: 7px 15px;
+  cursor: pointer;
+  transition: border-color 140ms ease, color 140ms ease, transform 120ms ease;
+}
+
+.g-btn:hover {
+  border-color: var(--g-blue-light);
+  color: #ffffff;
+}
+
+.g-btn-lucky:hover {
+  border-color: var(--g-green);
+  color: var(--g-green);
+}
+
+.g-btn:active {
+  transform: scale(0.98);
+}
+
+.composer-hint {
+  font-size: 11.5px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  margin-left: 6px;
+}
+
+.composer-hint kbd {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+@media (max-width: 860px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+  .app-sidebar {
+    height: auto;
+    position: relative;
+    border-right: 0;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .sidebar-nav {
+    max-height: 160px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

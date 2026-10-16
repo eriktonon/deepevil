@@ -1,0 +1,24 @@
+{
+  "name": "perplexity-local-engine",
+  "version": "1.0.0",
+  "description": "Mecanismo de respostas pessoal local estilo Perplexity com Node, Express, htmx, Brave Search, Readability, SQLite e Streaming SSE",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test tests/*.test.js"
+  },
+  "dependencies": {
+    "@mozilla/readability": "^0.5.0",
+    "better-sqlite3": "^11.8.1",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "htmx-ext-sse": "^2.2.2",
+    "htmx.org": "^2.0.4",
+    "jsdom": "^26.0.0",
+    "undici": "^7.2.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
