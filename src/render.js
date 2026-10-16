@@ -36,8 +36,8 @@ function renderTopSourcesStrip(turnId, sources = []) {
   }
 
   const cardsHtml = sources
-    .map((src) => {
-      const idx = src.citationIndex;
+    .map((src, i) => {
+      const idx = src.citationIndex ?? src.citation_index ?? i + 1;
       const shortHost = formatShortDomain(src.domain);
       const colorCycle = ['g-top-blue', 'g-top-red', 'g-top-yellow', 'g-top-green'][(idx - 1) % 4];
       return `
@@ -81,9 +81,11 @@ function renderTopSourcesStrip(turnId, sources = []) {
  */
 function renderAnswerMarkdownWithFootnotes(markdownText, turnId, sources = []) {
   const validSourcesMap = new Map();
-  for (const src of sources) {
-    if (src && Number.isInteger(src.citationIndex) && src.citationIndex >= 1) {
-      validSourcesMap.set(src.citationIndex, src);
+  for (let i = 0; i < sources.length; i++) {
+    const src = sources[i];
+    const cIdx = Number(src?.citationIndex ?? src?.citation_index ?? i + 1);
+    if (src && Number.isInteger(cIdx) && cIdx >= 1) {
+      validSourcesMap.set(cIdx, { ...src, citationIndex: cIdx });
     }
   }
 
@@ -114,10 +116,20 @@ function renderAnswerMarkdownWithFootnotes(markdownText, turnId, sources = []) {
 }
 
 function renderMarkdownProse(prose, turnId, validSourcesMap, seenFirstRef) {
-  // Garante que cabeçalhos Markdown (# .. ####) fiquem sempre em seu próprio bloco mesmo se o LLM usar quebra simples
+  // Limpa rótulo literal "Lead Executivo" caso o modelo o repita e garante separação de cabeçalhos e listas
   const normalizedProse = String(prose || '')
     .replace(/\r\n/g, '\n')
-    .replace(/^(#{1,4}\s+[^\n]+)$/gm, '\n\n$1\n\n');
+    .replace(/^\s*(?:\*\*|#+\s*)?Lead Executivo(?:\*\*)?[:\s—-]*\n+/i, '')
+    .replace(/^(#{1,4}\s+[^\n]+)$/gm, '\n\n$1\n\n')
+    .replace(/([^\n])\n((?:[-*•]|\d+[.)])\s+)/g, (full, prevChar, listStart, offset, fullStr) => {
+      // Se a linha anterior não for item de lista, insere quebra dupla para abrir <ul>/<ol> limpo
+      const before = fullStr.slice(0, offset + 1);
+      const prevLine = before.split('\n').pop() || '';
+      if (/^\s*(?:[-*•]|\d+[.)])\s+/.test(prevLine)) {
+        return full;
+      }
+      return `${prevChar}\n\n${listStart}`;
+    });
 
   const blocks = normalizedProse
     .trim()
@@ -130,7 +142,8 @@ function renderMarkdownProse(prose, turnId, validSourcesMap, seenFirstRef) {
       const headingMatch = block.match(/^(#{1,4})\s+([\s\S]*)$/);
       if (headingMatch) {
         const level = Math.min(headingMatch[1].length + 2, 5);
-        return `<h${level} class="answer-heading">${formatInlineMarkdownAndCitations(headingMatch[2].trim(), turnId, validSourcesMap, seenFirstRef)}</h${level}>`;
+        const cleanHeadingText = headingMatch[2].replace(/^#+\s*/, '').trim();
+        return `<h${level} class="answer-heading">${formatInlineMarkdownAndCitations(cleanHeadingText, turnId, validSourcesMap, seenFirstRef)}</h${level}>`;
       }
 
       const lines = block.split('\n').map((l) => l.trim()).filter(Boolean);
@@ -349,8 +362,9 @@ function renderTurnSourcesFootnotes(turnId, sources = [], meta = {}) {
   `;
 
   const itemsHtml = sources
-    .map((src) => {
-      const idx = src.citationIndex;
+    .map((src, i) => {
+      const idx = src.citationIndex ?? src.citation_index ?? i + 1;
+      const wordCount = Number(src.wordCount ?? src.word_count ?? 0);
       const sourceAnchorId = `source-${turnId}-${idx}`;
       const backRefHref = `#cite-ref-${turnId}-${idx}`;
       const previewExcerpt = String(src.excerpt || '').slice(0, 420);
@@ -371,7 +385,7 @@ function renderTurnSourcesFootnotes(turnId, sources = [], meta = {}) {
                 ${escapeHtml(src.title)}
               </a>
               <div class="footnote-meta">
-                <span class="footnote-stats tabular-nums">${Number(src.wordCount || 0)} palavras extraídas</span>
+                <span class="footnote-stats tabular-nums">${wordCount} palavras extraídas</span>
                 <span class="meta-sep" aria-hidden="true">·</span>
                 <a href="${backRefHref}" class="footnote-backlink" title="Ir para citação no texto">↩ saltar para citação [${idx}]</a>
               </div>

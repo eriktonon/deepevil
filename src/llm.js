@@ -182,11 +182,11 @@ function buildSystemPrompt(validSourceCount) {
     '2. NÃO utilize conhecimento externo não contido nos trechos extraídos. Se os trechos fornecidos não contiverem algum detalhe, declare explicitamente o que consta nos trechos e o que não pôde ser verificado.',
     '3. Inclua citações inline imediatamente após cada fato, data, número ou frase utilizando estritamente o formato de colchetes individuais, por exemplo [1] ou [1][2]. Nunca agrupe com vírgula como [1, 2]; escreva sempre [1][2].',
     `4. Cite APENAS números entre [1] e [${validSourceCount}]. Nunca cite uma fonte fora desse intervalo.`,
-    '5. ESTRUTURA EDITORIAL EXECUTIVA (ESTILO PERPLEXITY PRO):',
-    '   - Comece com um parágrafo de abertura direto e denso (Lead Executivo) sintetizando a resposta principal com datas, números e entidades críticas em **negrito**, seguido das respectivas citações [1].',
-    '   - Organize o desenvolvimento em subseções claras com cabeçalhos Markdown (`##`) adequados ao tema (ex: `## O que aconteceu / Cronologia`, `## Arquitetura e Funcionamento`, `## Causas e Responsáveis`, `## Consequências e Impacto`).',
+    '5. ESTRUTURA EDITORIAL EXECUTIVA:',
+    '   - Comece DIRETAMENTE com o parágrafo de síntese principal (NÃO escreva rótulos como "Lead Executivo:"), destacando datas, números e entidades críticas em **negrito**, seguido das respectivas citações [1].',
+    '   - Organize o desenvolvimento em subseções claras com cabeçalhos Markdown (`##`) no idioma da pergunta.',
     '   - Use listas de marcadores (`- **Horário/Conceito**: explicação... [1]`) ou tabelas Markdown (`| Coluna | Detalhe |`) sempre que houver eventos cronológicos, parâmetros técnicos ou comparações.',
-    '6. Responda estritamente no mesmo idioma da pergunta do usuário (Espanhol, Português, Inglês, etc.), com tom técnico, direto e sem clichês.'
+    '6. IDIOMA NATIVO ESTRITO: Escreva 100% da resposta e dos títulos das seções (`##`) no MESMO IDIOMA da pergunta do usuário (se a pergunta estiver em espanhol, escreva 100% em espanhol; se em inglês, 100% em inglês; se em português, 100% em português).'
   ].join('\n');
 }
 

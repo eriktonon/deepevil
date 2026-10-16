@@ -219,7 +219,13 @@ function createDatabase(customDbPath) {
     getTurn(turnId) {
       const turn = stmts.getTurn.get(Number(turnId));
       if (!turn) return null;
-      turn.sources = stmts.listSourcesByTurn.all(turn.id);
+      turn.sources = stmts.listSourcesByTurn.all(turn.id).map((s) => ({
+        ...s,
+        citationIndex: s.citation_index ?? s.citationIndex,
+        wordCount: s.word_count ?? s.wordCount ?? 0,
+        charCount: s.char_count ?? s.charCount ?? 0,
+        siteName: s.site_name ?? s.siteName ?? s.domain
+      }));
       return turn;
     },
 
@@ -228,7 +234,13 @@ function createDatabase(customDbPath) {
       if (!conv) return null;
       const turns = stmts.listTurnsByConversation.all(conv.id).map((turn) => ({
         ...turn,
-        sources: stmts.listSourcesByTurn.all(turn.id)
+        sources: stmts.listSourcesByTurn.all(turn.id).map((s) => ({
+          ...s,
+          citationIndex: s.citation_index ?? s.citationIndex,
+          wordCount: s.word_count ?? s.wordCount ?? 0,
+          charCount: s.char_count ?? s.charCount ?? 0,
+          siteName: s.site_name ?? s.siteName ?? s.domain
+        }))
       }));
       return {
         ...conv,
@@ -245,7 +257,13 @@ function createDatabase(customDbPath) {
         .filter((t) => t.status === 'completed' && t.answer_markdown && t.id !== Number(excludeTurnId))
         .map((t) => ({
           ...t,
-          sources: stmts.listSourcesByTurn.all(t.id)
+          sources: stmts.listSourcesByTurn.all(t.id).map((s) => ({
+            ...s,
+            citationIndex: s.citation_index ?? s.citationIndex,
+            wordCount: s.word_count ?? s.wordCount ?? 0,
+            charCount: s.char_count ?? s.charCount ?? 0,
+            siteName: s.site_name ?? s.siteName ?? s.domain
+          }))
         }));
     },
 
