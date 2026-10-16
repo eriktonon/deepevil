@@ -8,8 +8,9 @@ const { createDatabase } = require('./db');
 const { createQdrantStore } = require('./qdrant');
 const { buildContextualSearchQuery, searchBrave } = require('./search');
 const { extractTopSources } = require('./extractor');
-const { resolveLlmConfig, listOllamaModels, streamAnswer } = require('./llm');
+const { resolveLlmConfig, listOllamaModels, streamAnswer, translateTurnMarkdown } = require('./llm');
 const {
+  escapeHtml,
   renderAnswerMarkdownWithFootnotes,
   renderTurnSourcesFootnotes,
   renderPipelineStatusBadge,
@@ -56,6 +57,7 @@ function createApp(options = {}) {
   const extractFn = options.extractFn || extractTopSources;
   const streamAnswerFn = options.streamAnswerFn || streamAnswer;
   const listModelsFn = options.listModelsFn || listOllamaModels;
+  const translateTurnFn = options.translateTurnFn || translateTurnMarkdown;
 
   const app = express();
   app.disable('x-powered-by');
@@ -206,6 +208,56 @@ function createApp(options = {}) {
     await qdrant.deleteConversationPoints(convId).catch(() => {});
     const conversations = db.listConversations();
     res.type('html').send(renderSidebarConversations(conversations, null, false));
+  });
+
+  // Traduzir resposta de um turno com IA preservando citações [1][2] e fontes
+  app.post('/turns/:turnId/translate', async (req, res) => {
+    const turnId = Number(req.params.turnId);
+    const turn = db.getTurn(turnId);
+
+    if (!turn || !turn.answer_markdown) {
+      res.status(404).json({ ok: false, error: 'Turno ou resposta não encontrada para tradução.' });
+      return;
+    }
+
+    const targetLang = String(req.body?.targetLang || 'pt-BR').trim();
+    const selectedModel = String(req.body?.model || turn.model || '').trim();
+
+    try {
+      const result = await translateTurnFn({
+        markdownText: turn.answer_markdown,
+        targetLang,
+        sources: turn.sources || [],
+        env,
+        selectedModel
+      });
+
+      const renderedBody = renderAnswerMarkdownWithFootnotes(result.text, turn.id, turn.sources || []);
+      const badgeHtml = `
+        <div class="translated-banner" role="status">
+          <span class="g-yellow">●</span>
+          <span>Traduzido com IA para <strong>${escapeHtml(result.languageLabel)}</strong></span>
+          <span class="meta-sep" aria-hidden="true">·</span>
+          <code>${escapeHtml(result.model || selectedModel || 'local')}</code>
+        </div>
+      `;
+      const html = `${badgeHtml}\n${renderedBody}`;
+
+      res.json({
+        ok: true,
+        turnId: turn.id,
+        targetLang: result.targetLang,
+        languageLabel: result.languageLabel,
+        model: result.model,
+        translatedMarkdown: result.text,
+        html
+      });
+    } catch (err) {
+      res.status(500).json({
+        ok: false,
+        error: err?.message || 'Falha ao traduzir resposta com IA.'
+      });
+    }
   });
 
   // Submeter pergunta (inicial ou follow-up mantendo contexto da conversa anterior e LLM escolhida)

@@ -95,7 +95,74 @@
       return;
     }
 
-    // 5. Destaque visual suave ao clicar numa citação [1] de rodapé ou num card da faixa superior de fontes
+    // 5. Botão "Traduzir com IA"
+    const translateBtn = event.target.closest('[data-translate-turn]');
+    if (translateBtn) {
+      const turnId = translateBtn.getAttribute('data-translate-turn');
+      const answerEl = document.getElementById(`turn-answer-${turnId}`);
+      const langSelect = document.getElementById(`translate-lang-${turnId}`);
+      const restoreBtn = document.getElementById(`restore-btn-${turnId}`);
+      const modelSelect = document.getElementById('model-select');
+      if (!turnId || !answerEl || translateBtn.disabled) return;
+
+      if (!window.__deepevilOriginalAnswers) {
+        window.__deepevilOriginalAnswers = new Map();
+      }
+      if (!window.__deepevilOriginalAnswers.has(turnId)) {
+        window.__deepevilOriginalAnswers.set(turnId, answerEl.innerHTML);
+      }
+
+      const targetLang = langSelect ? langSelect.value : 'pt-BR';
+      const selectedModel = modelSelect ? modelSelect.value : '';
+      const labelEl = translateBtn.querySelector('.translate-btn-label');
+
+      translateBtn.disabled = true;
+      translateBtn.classList.add('is-translating');
+      if (labelEl) labelEl.textContent = 'Traduzindo…';
+
+      fetch(`/turns/${encodeURIComponent(turnId)}/translate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ targetLang, model: selectedModel })
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data && data.ok && data.html) {
+            answerEl.innerHTML = data.html;
+            if (labelEl) labelEl.textContent = `Traduzido (${targetLang})`;
+            if (restoreBtn) restoreBtn.hidden = false;
+          } else {
+            if (labelEl) labelEl.textContent = 'Erro ao traduzir';
+          }
+        })
+        .catch(() => {
+          if (labelEl) labelEl.textContent = 'Erro ao traduzir';
+        })
+        .finally(() => {
+          translateBtn.disabled = false;
+          translateBtn.classList.remove('is-translating');
+        });
+      return;
+    }
+
+    // 6. Botão "↺ Original" (Restaurar idioma original)
+    const restoreBtn = event.target.closest('[data-restore-turn]');
+    if (restoreBtn) {
+      const turnId = restoreBtn.getAttribute('data-restore-turn');
+      const answerEl = document.getElementById(`turn-answer-${turnId}`);
+      const translateBtn = document.querySelector(`[data-translate-turn="${turnId}"]`);
+      if (turnId && answerEl && window.__deepevilOriginalAnswers && window.__deepevilOriginalAnswers.has(turnId)) {
+        answerEl.innerHTML = window.__deepevilOriginalAnswers.get(turnId);
+        restoreBtn.hidden = true;
+        if (translateBtn) {
+          const labelEl = translateBtn.querySelector('.translate-btn-label');
+          if (labelEl) labelEl.textContent = 'Traduzir com IA';
+        }
+      }
+      return;
+    }
+
+    // 7. Destaque visual suave ao clicar numa citação [1] de rodapé ou num card da faixa superior de fontes
     const citationLink = event.target.closest('.citation-link, .top-source-card');
     if (citationLink) {
       const sourceId = citationLink.getAttribute('data-source-id');

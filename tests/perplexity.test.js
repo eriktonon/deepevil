@@ -514,4 +514,100 @@ test('5. Streaming real de SSE para Anthropic Claude e OpenAI GPT via undici + S
   assert.equal(resOllama.text, 'Rodando localmente via Ollama [1] sem custo de API .');
 });
 
+test('6. Botão de Tradução com IA (/turns/:turnId/translate) traduz o Markdown preservando citações [1][2] e estrutura', async () => {
+  const db = createDatabase(':memory:');
+  const conv = db.createConversation('How do Linux kernel rootkits hook syscalls?');
+  const turn = db.createTurn({
+    conversationId: conv.id,
+    question: conv.title,
+    searchQuery: conv.title,
+    provider: 'ollama',
+    model: 'granite4.2-uncensored:latest'
+  });
+
+  const sources = [
+    {
+      citationIndex: 1,
+      url: 'https://xcellerator.github.io/posts/linux_rootkits_02/',
+      title: 'Linux Rootkits Part 2: Ftrace',
+      domain: 'xcellerator.github.io',
+      siteName: 'TheXcellerator',
+      excerpt: 'Ftrace allows hooking kernel functions without overwriting sys_call_table.',
+      wordCount: 10,
+      charCount: 74
+    },
+    {
+      citationIndex: 2,
+      url: 'https://www.kernel.org/doc/html/latest/trace/ftrace-uses.html',
+      title: 'Using ftrace to hook to functions',
+      domain: 'kernel.org',
+      siteName: 'Kernel Docs',
+      excerpt: 'Ftrace records enabled functions in /sys/kernel/tracing/enabled_functions.',
+      wordCount: 8,
+      charCount: 74
+    }
+  ];
+
+  db.saveTurnSources(turn.id, sources);
+  db.completeTurn(turn.id, {
+    answerMarkdown: 'Linux rootkits use **ftrace** to hook syscalls [1] and can be detected via tracing files [2].',
+    provider: 'ollama',
+    model: 'granite4.2-uncensored:latest',
+    attemptedUrlsCount: 2,
+    extractedSourcesCount: 2,
+    durationMs: 1200
+  });
+
+  // Verifica que o botão data-translate-turn e o seletor de idioma estão presentes no HTML do rodapé
+  const footnotesHtml = renderTurnSourcesFootnotes(turn.id, sources, {
+    status: 'completed',
+    question: conv.title
+  });
+  assert.match(footnotesHtml, /data-translate-turn="1"/);
+  assert.match(footnotesHtml, /id="translate-lang-1"/);
+  assert.match(footnotesHtml, /Traduzir com IA/);
+
+  const app = createApp({
+    db,
+    qdrant: {
+      checkHealth: async () => ({ online: true }),
+      indexTurn: async () => ({ indexed: true }),
+      deleteConversationPoints: async () => true,
+      searchKnowledge: async () => []
+    },
+    translateTurnFn: async ({ targetLang, selectedModel }) => ({
+      text: 'Rootkits de kernel Linux utilizam **ftrace** para interceptar syscalls [1] e podem ser detectados via arquivos de tracing [2].',
+      targetLang,
+      languageLabel: 'Português do Brasil (pt-BR)',
+      provider: 'ollama',
+      model: selectedModel || 'granite4.2-uncensored:latest'
+    })
+  });
+
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/turns/${turn.id}/translate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetLang: 'pt-BR', model: 'granite4.2-uncensored:latest' })
+    });
+    assert.equal(res.status, 200);
+    const json = await res.json();
+    assert.equal(json.ok, true);
+    assert.equal(json.targetLang, 'pt-BR');
+    assert.match(json.html, /class="translated-banner"/);
+    assert.match(json.html, /Português do Brasil \(pt-BR\)/);
+    assert.match(json.html, /Rootkits de kernel Linux utilizam <strong>ftrace<\/strong>/);
+    assert.match(json.html, /href="#source-1-1"/);
+    assert.match(json.html, /href="#source-1-2"/);
+  } finally {
+    server.close();
+    db.close();
+  }
+});
+
+
 

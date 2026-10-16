@@ -544,13 +544,130 @@ async function parseSseStream(readableBody, onDataLine) {
   }
 }
 
+const SUPPORTED_TRANSLATION_LANGUAGES = {
+  'pt-BR': 'Português do Brasil (pt-BR)',
+  en: 'English (en-US)',
+  es: 'Español (es)',
+  fr: 'Français (fr)',
+  de: 'Deutsch (de)'
+};
+
+/**
+ * Traduz o Markdown de uma resposta já gerada para o idioma de destino (`targetLang`)
+ * preservando rigorosamente a formatação Markdown (`##`, `**`, listas, tabelas, código)
+ * e todas as citações inline `[1][2]`.
+ */
+async function translateTurnMarkdown({
+  markdownText = '',
+  targetLang = 'pt-BR',
+  sources = [],
+  env = process.env,
+  selectedModel = '',
+  requestFn = request,
+  customTranslateFn = null
+} = {}) {
+  const cleanSourceMd = String(markdownText || '').trim();
+  if (!cleanSourceMd) {
+    return {
+      text: '',
+      targetLang,
+      languageLabel: SUPPORTED_TRANSLATION_LANGUAGES[targetLang] || targetLang,
+      provider: 'none',
+      model: ''
+    };
+  }
+
+  const languageLabel = SUPPORTED_TRANSLATION_LANGUAGES[targetLang] || targetLang;
+  const config = resolveLlmConfig(env, selectedModel);
+
+  const systemPrompt = [
+    `You are a senior technical translator for the DeepEvil answer engine.`,
+    `Translate the user-provided Markdown text accurately and naturally into ${languageLabel}.`,
+    `STRICT RULES:`,
+    `1. Preserve ALL citation markers like [1], [2], [1][3] in their exact positions at the end of sentences/clauses. NEVER remove, renumber, or translate bracketed numbers.`,
+    `2. Preserve ALL Markdown structure: headings (##), bold (**text**), bullet lists (-), numbered lists, tables (| col |), inline code (\`code\`), and fenced code blocks.`,
+    `3. Keep technical identifiers, system call names, paths, C/Rust/JS symbols, and proper nouns intact (e.g. ftrace, sys_call_table, kallsyms_lookup_name, HNSW, Raft, WAL).`,
+    `4. Output ONLY the translated Markdown text. Do NOT add any introductory or concluding commentary.`
+  ].join('\n');
+
+  const messages = [
+    {
+      role: 'user',
+      content: cleanSourceMd
+    }
+  ];
+
+  if (typeof customTranslateFn === 'function') {
+    const rawOut = await customTranslateFn({
+      markdownText: cleanSourceMd,
+      targetLang,
+      languageLabel,
+      config,
+      systemPrompt,
+      messages
+    });
+    return {
+      text: sanitizeCitations(String(rawOut || '').trim(), sources.length),
+      targetLang,
+      languageLabel,
+      provider: config.provider,
+      model: config.model
+    };
+  }
+
+  let rawAccumulated = '';
+  const handleToken = (delta) => {
+    if (delta) rawAccumulated += delta;
+  };
+
+  if (config.provider === 'ollama') {
+    await streamFromOllama({
+      baseUrl: config.baseUrl || DEFAULT_OLLAMA_BASE_URL,
+      model: config.model,
+      numCtx: config.numCtx || DEFAULT_OLLAMA_NUM_CTX,
+      systemPrompt,
+      messages,
+      onToken: handleToken,
+      requestFn
+    });
+  } else if (config.provider === 'openai') {
+    await streamFromOpenAI({
+      apiKey: config.apiKey,
+      model: config.model,
+      systemPrompt,
+      messages,
+      onToken: handleToken,
+      requestFn
+    });
+  } else {
+    await streamFromAnthropic({
+      apiKey: config.apiKey,
+      model: config.model,
+      systemPrompt,
+      messages,
+      onToken: handleToken,
+      requestFn
+    });
+  }
+
+  return {
+    text: sanitizeCitations(rawAccumulated.trim(), sources.length),
+    targetLang,
+    languageLabel,
+    provider: config.provider,
+    model: config.model
+  };
+}
+
 module.exports = {
+  SUPPORTED_TRANSLATION_LANGUAGES,
   resolveLlmConfig,
   listOllamaModels,
   buildSystemPrompt,
   buildUserPromptWithExcerpts,
   buildConversationMessages,
   sanitizeCitations,
-  streamAnswer
+  streamAnswer,
+  translateTurnMarkdown
 };
 

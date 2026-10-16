@@ -351,6 +351,41 @@ function renderTurnSourcesFootnotes(turnId, sources = [], meta = {}) {
         </svg>
         <span class="copy-btn-label">Copiar</span>
       </button>
+
+      <div class="turn-translate-group" role="group" aria-label="Traduzir resposta com IA">
+        <label for="translate-lang-${turnId}" class="sr-only">Idioma para tradução</label>
+        <select id="translate-lang-${turnId}" class="turn-translate-select" title="Selecionar idioma de destino">
+          <option value="pt-BR">Português (BR)</option>
+          <option value="en">English</option>
+          <option value="es">Español</option>
+          <option value="fr">Français</option>
+          <option value="de">Deutsch</option>
+        </select>
+        <button
+          type="button"
+          class="turn-action-btn turn-translate-btn"
+          data-translate-turn="${turnId}"
+          title="Traduzir esta resposta com IA preservando as citações [1][2]"
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="2" y1="12" x2="22" y2="12"></line>
+            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+          </svg>
+          <span class="translate-btn-label">Traduzir com IA</span>
+        </button>
+        <button
+          type="button"
+          id="restore-btn-${turnId}"
+          class="turn-action-btn turn-restore-btn"
+          data-restore-turn="${turnId}"
+          hidden
+          title="Restaurar resposta no idioma original"
+        >
+          <span>↺ Original</span>
+        </button>
+      </div>
+
       <a href="#source-${turnId}-1" class="turn-action-btn" title="Rolar para as notas de rodapé verificadas">
         <span class="g-blue">●</span>
         <span>${sources.length} ${sources.length === 1 ? 'fonte verificada' : 'fontes verificadas'}</span>
