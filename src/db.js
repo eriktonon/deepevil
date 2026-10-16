@@ -63,11 +63,34 @@ function createDatabase(customDbPath) {
       UNIQUE(turn_id, citation_index)
     );
 
+    CREATE TABLE IF NOT EXISTS turn_translations (
+      turn_id INTEGER NOT NULL,
+      target_lang TEXT NOT NULL,
+      model TEXT NOT NULL DEFAULT '',
+      translated_markdown TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (turn_id, target_lang),
+      FOREIGN KEY (turn_id) REFERENCES turns(id) ON DELETE CASCADE
+    );
+
     CREATE INDEX IF NOT EXISTS idx_turns_conversation_id ON turns(conversation_id);
     CREATE INDEX IF NOT EXISTS idx_sources_turn_id ON sources(turn_id);
   `);
 
   const stmts = {
+    getTurnTranslation: db.prepare(`
+      SELECT turn_id, target_lang, model, translated_markdown, created_at
+      FROM turn_translations
+      WHERE turn_id = ? AND target_lang = ?
+    `),
+    upsertTurnTranslation: db.prepare(`
+      INSERT INTO turn_translations (turn_id, target_lang, model, translated_markdown, created_at)
+      VALUES (@turnId, @targetLang, @model, @translatedMarkdown, datetime('now'))
+      ON CONFLICT(turn_id, target_lang) DO UPDATE SET
+        model = excluded.model,
+        translated_markdown = excluded.translated_markdown,
+        created_at = datetime('now')
+    `),
     insertConversation: db.prepare(`
       INSERT INTO conversations (title, created_at, updated_at)
       VALUES (@title, datetime('now'), datetime('now'))
@@ -319,6 +342,20 @@ function createDatabase(customDbPath) {
         durationMs
       });
       return this.getTurn(turnId);
+    },
+
+    getTurnTranslation(turnId, targetLang) {
+      return stmts.getTurnTranslation.get(Number(turnId), String(targetLang || 'pt-BR').trim()) || null;
+    },
+
+    saveTurnTranslation({ turnId, targetLang, model = '', translatedMarkdown = '' }) {
+      stmts.upsertTurnTranslation.run({
+        turnId: Number(turnId),
+        targetLang: String(targetLang || 'pt-BR').trim(),
+        model: String(model || ''),
+        translatedMarkdown: String(translatedMarkdown || '')
+      });
+      return this.getTurnTranslation(turnId, targetLang);
     },
 
     close() {

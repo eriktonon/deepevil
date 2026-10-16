@@ -567,6 +567,7 @@ test('6. Botão de Tradução com IA (/turns/:turnId/translate) traduz o Markdow
   assert.match(footnotesHtml, /id="translate-lang-1"/);
   assert.match(footnotesHtml, /Traduzir com IA/);
 
+  let llmTranslateCalls = 0;
   const app = createApp({
     db,
     qdrant: {
@@ -575,13 +576,21 @@ test('6. Botão de Tradução com IA (/turns/:turnId/translate) traduz o Markdow
       deleteConversationPoints: async () => true,
       searchKnowledge: async () => []
     },
-    translateTurnFn: async ({ targetLang, selectedModel }) => ({
-      text: 'Rootkits de kernel Linux utilizam **ftrace** para interceptar syscalls [1] e podem ser detectados via arquivos de tracing [2].',
-      targetLang,
-      languageLabel: 'Português do Brasil (pt-BR)',
-      provider: 'ollama',
-      model: selectedModel || 'granite4.2-uncensored:latest'
-    })
+    translateTurnFn: async ({ targetLang, selectedModel, onDelta }) => {
+      llmTranslateCalls += 1;
+      const full = 'Rootkits de kernel Linux utilizam **ftrace** para interceptar syscalls [1] e podem ser detectados via arquivos de tracing [2].';
+      if (typeof onDelta === 'function') {
+        onDelta('Rootkits ', 'Rootkits ');
+        onDelta('de kernel', full);
+      }
+      return {
+        text: full,
+        targetLang,
+        languageLabel: 'Português do Brasil (pt-BR)',
+        provider: 'ollama',
+        model: selectedModel || 'granite4.2-uncensored:latest'
+      };
+    }
   });
 
   const server = http.createServer(app);
@@ -589,6 +598,7 @@ test('6. Botão de Tradução com IA (/turns/:turnId/translate) traduz o Markdow
   const { port } = server.address();
 
   try {
+    // 6.1 Primeira tradução via POST: invoca a LLM e salva no cache SQLite
     const res = await fetch(`http://127.0.0.1:${port}/turns/${turn.id}/translate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -597,17 +607,48 @@ test('6. Botão de Tradução com IA (/turns/:turnId/translate) traduz o Markdow
     assert.equal(res.status, 200);
     const json = await res.json();
     assert.equal(json.ok, true);
+    assert.equal(json.cached, false);
+    assert.equal(llmTranslateCalls, 1);
     assert.equal(json.targetLang, 'pt-BR');
     assert.match(json.html, /class="translated-banner"/);
     assert.match(json.html, /Português do Brasil \(pt-BR\)/);
     assert.match(json.html, /Rootkits de kernel Linux utilizam <strong>ftrace<\/strong>/);
     assert.match(json.html, /href="#source-1-1"/);
     assert.match(json.html, /href="#source-1-2"/);
+
+    // 6.2 Segunda tradução para o mesmo idioma: retorna instantaneamente do cache SQLite (0ms) sem chamar a LLM
+    const cachedRes = await fetch(`http://127.0.0.1:${port}/turns/${turn.id}/translate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetLang: 'pt-BR', model: 'granite4.2-uncensored:latest' })
+    });
+    const cachedJson = await cachedRes.json();
+    assert.equal(cachedJson.ok, true);
+    assert.equal(cachedJson.cached, true);
+    assert.equal(llmTranslateCalls, 1);
+    assert.match(cachedJson.html, /\[cache 0ms\]/);
+
+    // 6.3 Streaming SSE em tempo real (/turns/:turnId/translate/stream) para um novo idioma (es)
+    const streamRes = await fetch(`http://127.0.0.1:${port}/turns/${turn.id}/translate/stream?lang=es`);
+    assert.equal(streamRes.status, 200);
+    const sseBody = await streamRes.text();
+    assert.match(sseBody, /event: answer/);
+    assert.match(sseBody, /event: done/);
+    assert.equal(llmTranslateCalls, 2);
+
+    // 6.4 Exportação de relatório Markdown (.md)
+    const exportRes = await fetch(`http://127.0.0.1:${port}/turns/${turn.id}/export.md?lang=pt-BR`);
+    assert.equal(exportRes.status, 200);
+    const mdText = await exportRes.text();
+    assert.match(mdText, /# How do Linux kernel rootkits hook syscalls\?/);
+    assert.match(mdText, /Rootkits de kernel Linux utilizam \*\*ftrace\*\*/);
+    assert.match(mdText, /Fontes Verificadas \(SERP \/\/ Readability\)/);
   } finally {
     server.close();
     db.close();
   }
 });
+
 
 
 

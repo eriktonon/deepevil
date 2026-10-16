@@ -9,7 +9,7 @@ const DEFAULT_ANTHROPIC_MODEL = 'claude-3-5-sonnet-latest';
 const DEFAULT_OPENAI_MODEL = 'gpt-4o-mini';
 const DEFAULT_OLLAMA_BASE_URL = 'http://127.0.0.1:11434';
 const DEFAULT_OLLAMA_MODEL = 'granite4.2-uncensored:latest';
-const DEFAULT_OLLAMA_NUM_CTX = 16384;
+const DEFAULT_OLLAMA_NUM_CTX = 8192;
 
 /**
  * Resolve qual provedor e modelo de LLM utilizar com base nas variáveis do .env
@@ -396,6 +396,8 @@ async function streamFromOllama({ baseUrl, model, numCtx, systemPrompt, messages
     body: JSON.stringify({
       model,
       stream: true,
+      think: false,
+      keep_alive: '24h',
       options: {
         temperature: 0.1,
         num_ctx: numCtx
@@ -555,12 +557,13 @@ const SUPPORTED_TRANSLATION_LANGUAGES = {
 /**
  * Traduz o Markdown de uma resposta já gerada para o idioma de destino (`targetLang`)
  * preservando rigorosamente a formatação Markdown (`##`, `**`, listas, tabelas, código)
- * e todas as citações inline `[1][2]`.
+ * e todas as citações inline `[1][2]`. Suporta streaming via `onDelta`.
  */
 async function translateTurnMarkdown({
   markdownText = '',
   targetLang = 'pt-BR',
   sources = [],
+  onDelta = null,
   env = process.env,
   selectedModel = '',
   requestFn = request,
@@ -581,13 +584,13 @@ async function translateTurnMarkdown({
   const config = resolveLlmConfig(env, selectedModel);
 
   const systemPrompt = [
-    `You are a senior technical translator for the DeepEvil answer engine.`,
-    `Translate the user-provided Markdown text accurately and naturally into ${languageLabel}.`,
+    `You are a fast, accurate technical translator for the DeepEvil answer engine.`,
+    `Translate the user-provided Markdown text into ${languageLabel}.`,
     `STRICT RULES:`,
-    `1. Preserve ALL citation markers like [1], [2], [1][3] in their exact positions at the end of sentences/clauses. NEVER remove, renumber, or translate bracketed numbers.`,
-    `2. Preserve ALL Markdown structure: headings (##), bold (**text**), bullet lists (-), numbered lists, tables (| col |), inline code (\`code\`), and fenced code blocks.`,
-    `3. Keep technical identifiers, system call names, paths, C/Rust/JS symbols, and proper nouns intact (e.g. ftrace, sys_call_table, kallsyms_lookup_name, HNSW, Raft, WAL).`,
-    `4. Output ONLY the translated Markdown text. Do NOT add any introductory or concluding commentary.`
+    `1. Preserve ALL citation markers like [1], [2], [1][3] in their exact positions. NEVER remove or renumber bracketed numbers.`,
+    `2. Preserve ALL Markdown structure: headings (##), bold (**text**), bullet lists (-), tables, and code (\`code\`).`,
+    `3. Keep technical identifiers, syscall names, paths, and proper nouns intact (ftrace, sys_call_table, kallsyms_lookup_name, HNSW, Raft, WAL).`,
+    `4. Output ONLY the translated Markdown text.`
   ].join('\n');
 
   const messages = [
@@ -606,8 +609,10 @@ async function translateTurnMarkdown({
       systemPrompt,
       messages
     });
+    const sanitized = sanitizeCitations(String(rawOut || '').trim(), sources.length);
+    if (onDelta) onDelta(sanitized, sanitized);
     return {
-      text: sanitizeCitations(String(rawOut || '').trim(), sources.length),
+      text: sanitized,
       targetLang,
       languageLabel,
       provider: config.provider,
@@ -617,7 +622,11 @@ async function translateTurnMarkdown({
 
   let rawAccumulated = '';
   const handleToken = (delta) => {
-    if (delta) rawAccumulated += delta;
+    if (!delta) return;
+    rawAccumulated += delta;
+    if (onDelta) {
+      onDelta(delta, sanitizeCitations(rawAccumulated, sources.length));
+    }
   };
 
   if (config.provider === 'ollama') {

@@ -8,7 +8,7 @@ const { createDatabase } = require('./db');
 const { createQdrantStore } = require('./qdrant');
 const { buildContextualSearchQuery, searchBrave } = require('./search');
 const { extractTopSources } = require('./extractor');
-const { resolveLlmConfig, listOllamaModels, streamAnswer, translateTurnMarkdown } = require('./llm');
+const { SUPPORTED_TRANSLATION_LANGUAGES, resolveLlmConfig, listOllamaModels, streamAnswer, translateTurnMarkdown } = require('./llm');
 const {
   escapeHtml,
   renderAnswerMarkdownWithFootnotes,
@@ -210,7 +210,21 @@ function createApp(options = {}) {
     res.type('html').send(renderSidebarConversations(conversations, null, false));
   });
 
-  // Traduzir resposta de um turno com IA preservando citações [1][2] e fontes
+  const buildTranslatedHtml = (turn, translatedMd, languageLabel, modelName, isCached = false) => {
+    const renderedBody = renderAnswerMarkdownWithFootnotes(translatedMd, turn.id, turn.sources || []);
+    const cacheTag = isCached ? ' <span class="g-green">[cache 0ms]</span>' : '';
+    const badgeHtml = `
+      <div class="translated-banner" role="status">
+        <span class="g-yellow">●</span>
+        <span>Traduzido com IA para <strong>${escapeHtml(languageLabel)}</strong>${cacheTag}</span>
+        <span class="meta-sep" aria-hidden="true">·</span>
+        <code>${escapeHtml(modelName || 'local')}</code>
+      </div>
+    `;
+    return `${badgeHtml}\n${renderedBody}`;
+  };
+
+  // Traduzir resposta de um turno com IA preservando citações [1][2] e fontes (com cache SQLite 0ms)
   app.post('/turns/:turnId/translate', async (req, res) => {
     const turnId = Number(req.params.turnId);
     const turn = db.getTurn(turnId);
@@ -222,6 +236,26 @@ function createApp(options = {}) {
 
     const targetLang = String(req.body?.targetLang || 'pt-BR').trim();
     const selectedModel = String(req.body?.model || turn.model || '').trim();
+    const languageLabel = SUPPORTED_TRANSLATION_LANGUAGES[targetLang] || targetLang;
+
+    const cached = !req.body?.force && typeof db.getTurnTranslation === 'function'
+      ? db.getTurnTranslation(turn.id, targetLang)
+      : null;
+
+    if (cached && cached.translated_markdown) {
+      const html = buildTranslatedHtml(turn, cached.translated_markdown, languageLabel, cached.model || selectedModel, true);
+      res.json({
+        ok: true,
+        cached: true,
+        turnId: turn.id,
+        targetLang,
+        languageLabel,
+        model: cached.model || selectedModel,
+        translatedMarkdown: cached.translated_markdown,
+        html
+      });
+      return;
+    }
 
     try {
       const result = await translateTurnFn({
@@ -232,19 +266,20 @@ function createApp(options = {}) {
         selectedModel
       });
 
-      const renderedBody = renderAnswerMarkdownWithFootnotes(result.text, turn.id, turn.sources || []);
-      const badgeHtml = `
-        <div class="translated-banner" role="status">
-          <span class="g-yellow">●</span>
-          <span>Traduzido com IA para <strong>${escapeHtml(result.languageLabel)}</strong></span>
-          <span class="meta-sep" aria-hidden="true">·</span>
-          <code>${escapeHtml(result.model || selectedModel || 'local')}</code>
-        </div>
-      `;
-      const html = `${badgeHtml}\n${renderedBody}`;
+      if (typeof db.saveTurnTranslation === 'function' && result.text) {
+        db.saveTurnTranslation({
+          turnId: turn.id,
+          targetLang: result.targetLang,
+          model: result.model || selectedModel,
+          translatedMarkdown: result.text
+        });
+      }
+
+      const html = buildTranslatedHtml(turn, result.text, result.languageLabel, result.model || selectedModel, false);
 
       res.json({
         ok: true,
+        cached: false,
         turnId: turn.id,
         targetLang: result.targetLang,
         languageLabel: result.languageLabel,
@@ -258,6 +293,122 @@ function createApp(options = {}) {
         error: err?.message || 'Falha ao traduzir resposta com IA.'
       });
     }
+  });
+
+  // Streaming SSE em tempo real da tradução com IA (80 tok/s na GPU + Cache SQLite 0ms)
+  app.get('/turns/:turnId/translate/stream', async (req, res) => {
+    const turnId = Number(req.params.turnId);
+    const turn = db.getTurn(turnId);
+    const targetLang = String(req.query?.lang || 'pt-BR').trim();
+    const selectedModel = String(req.query?.model || turn?.model || '').trim();
+    const languageLabel = SUPPORTED_TRANSLATION_LANGUAGES[targetLang] || targetLang;
+
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    if (typeof res.flushHeaders === 'function') {
+      res.flushHeaders();
+    }
+
+    const writeSse = (eventName, payload) => {
+      if (res.writableEnded) return;
+      const singleLine = String(payload || '').replace(/\r?\n/g, ' ');
+      res.write(`event: ${eventName}\ndata: ${singleLine}\n\n`);
+    };
+
+    if (!turn || !turn.answer_markdown) {
+      writeSse('done', 'error');
+      res.end();
+      return;
+    }
+
+    const cached = typeof db.getTurnTranslation === 'function'
+      ? db.getTurnTranslation(turn.id, targetLang)
+      : null;
+
+    if (cached && cached.translated_markdown) {
+      writeSse('answer', buildTranslatedHtml(turn, cached.translated_markdown, languageLabel, cached.model || selectedModel, true));
+      writeSse('done', JSON.stringify({ cached: true, durationMs: 0, targetLang }));
+      res.end();
+      return;
+    }
+
+    const startedAt = Date.now();
+    try {
+      const llmConfig = resolveLlmConfig(env, selectedModel);
+      const result = await translateTurnFn({
+        markdownText: turn.answer_markdown,
+        targetLang,
+        sources: turn.sources || [],
+        env,
+        selectedModel: llmConfig.model,
+        onDelta: (_delta, sanitizedAccumulated) => {
+          writeSse('answer', buildTranslatedHtml(turn, sanitizedAccumulated, languageLabel, llmConfig.model, false));
+        }
+      });
+
+      if (typeof db.saveTurnTranslation === 'function' && result.text) {
+        db.saveTurnTranslation({
+          turnId: turn.id,
+          targetLang: result.targetLang,
+          model: result.model || llmConfig.model,
+          translatedMarkdown: result.text
+        });
+      }
+
+      const durationMs = Date.now() - startedAt;
+      writeSse('answer', buildTranslatedHtml(turn, result.text, result.languageLabel, result.model || llmConfig.model, false));
+      writeSse('done', JSON.stringify({ cached: false, durationMs, targetLang: result.targetLang }));
+      res.end();
+    } catch (_) {
+      writeSse('done', JSON.stringify({ error: true }));
+      res.end();
+    }
+  });
+
+  // Exportar relatório técnico completo do turno em Markdown (.md) com citações e notas de rodapé
+  app.get('/turns/:turnId/export.md', (req, res) => {
+    const turnId = Number(req.params.turnId);
+    const turn = db.getTurn(turnId);
+    if (!turn) {
+      res.status(404).type('text/plain').send('Turno não encontrado.');
+      return;
+    }
+
+    const reqLang = String(req.query?.lang || '').trim();
+    const cachedTranslation = reqLang && typeof db.getTurnTranslation === 'function'
+      ? db.getTurnTranslation(turn.id, reqLang)
+      : null;
+
+    const bodyMarkdown = cachedTranslation?.translated_markdown || turn.answer_markdown || '*(Sem resposta gerada)*';
+    const sources = Array.isArray(turn.sources) ? turn.sources : [];
+    const footnotesBlock = sources.length > 0
+      ? [
+          '',
+          '---',
+          '## Fontes Verificadas (SERP // Readability)',
+          '',
+          ...sources.map((s, idx) => {
+            const cIdx = s.citation_index || s.citationIndex || idx + 1;
+            return `- **[${cIdx}] [${s.title || s.domain}](${s.url})** — \`${s.domain}\` (${s.word_count || s.wordCount || 0} palavras)`;
+          })
+        ].join('\n')
+      : '';
+
+    const doc = [
+      `# ${turn.question}`,
+      '',
+      `> **DeepEvil Intelligence Report** · Turno \`#${turn.id}\` · Engine: \`${turn.model || 'local'}\` · Dork: \`${turn.search_query || turn.question}\`${cachedTranslation ? ` · Traduzido (\`${reqLang}\`)` : ''}`,
+      '',
+      bodyMarkdown,
+      footnotesBlock,
+      ''
+    ].join('\n');
+
+    res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="deepevil-turn-${turn.id}.md"`);
+    res.send(doc);
   });
 
   // Submeter pergunta (inicial ou follow-up mantendo contexto da conversa anterior e LLM escolhida)

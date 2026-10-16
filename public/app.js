@@ -95,7 +95,7 @@
       return;
     }
 
-    // 5. Botão "Traduzir com IA"
+    // 5. Botão "Traduzir com IA" (Streaming SSE em tempo real + Cache SQLite 0ms)
     const translateBtn = event.target.closest('[data-translate-turn]');
     if (translateBtn) {
       const turnId = translateBtn.getAttribute('data-translate-turn');
@@ -118,7 +118,60 @@
 
       translateBtn.disabled = true;
       translateBtn.classList.add('is-translating');
-      if (labelEl) labelEl.textContent = 'Traduzindo…';
+      if (labelEl) labelEl.textContent = 'Traduzindo (GPU stream)…';
+
+      const finishTranslation = (ok, meta) => {
+        translateBtn.disabled = false;
+        translateBtn.classList.remove('is-translating');
+        if (ok) {
+          if (restoreBtn) restoreBtn.hidden = false;
+          if (labelEl) {
+            if (meta && meta.cached) {
+              labelEl.textContent = `Traduzido (${targetLang}) · cache 0ms ⚡`;
+            } else if (meta && typeof meta.durationMs === 'number') {
+              labelEl.textContent = `Traduzido (${targetLang}) · ${(meta.durationMs / 1000).toFixed(1)}s`;
+            } else {
+              labelEl.textContent = `Traduzido (${targetLang})`;
+            }
+          }
+        } else if (labelEl) {
+          labelEl.textContent = 'Erro ao traduzir';
+        }
+      };
+
+      if (typeof window.EventSource === 'function') {
+        const streamUrl = `/turns/${encodeURIComponent(turnId)}/translate/stream?lang=${encodeURIComponent(targetLang)}&model=${encodeURIComponent(selectedModel)}`;
+        const es = new window.EventSource(streamUrl);
+        let receivedAny = false;
+
+        es.addEventListener('answer', (e) => {
+          if (e.data) {
+            receivedAny = true;
+            answerEl.innerHTML = e.data;
+          }
+        });
+
+        es.addEventListener('done', (e) => {
+          es.close();
+          let meta = {};
+          try {
+            meta = JSON.parse(e.data || '{}');
+          } catch (_) {
+            // Ignora erro de parse
+          }
+          finishTranslation(receivedAny, meta);
+        });
+
+        es.addEventListener('error', () => {
+          es.close();
+          if (receivedAny) {
+            finishTranslation(true, {});
+          } else {
+            finishTranslation(false, {});
+          }
+        });
+        return;
+      }
 
       fetch(`/turns/${encodeURIComponent(turnId)}/translate`, {
         method: 'POST',
@@ -129,18 +182,13 @@
         .then((data) => {
           if (data && data.ok && data.html) {
             answerEl.innerHTML = data.html;
-            if (labelEl) labelEl.textContent = `Traduzido (${targetLang})`;
-            if (restoreBtn) restoreBtn.hidden = false;
+            finishTranslation(true, data);
           } else {
-            if (labelEl) labelEl.textContent = 'Erro ao traduzir';
+            finishTranslation(false, {});
           }
         })
         .catch(() => {
-          if (labelEl) labelEl.textContent = 'Erro ao traduzir';
-        })
-        .finally(() => {
-          translateBtn.disabled = false;
-          translateBtn.classList.remove('is-translating');
+          finishTranslation(false, {});
         });
       return;
     }
