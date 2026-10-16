@@ -5,7 +5,7 @@ const { JSDOM, VirtualConsole } = require('jsdom');
 const { Readability } = require('@mozilla/readability');
 
 const DEFAULT_TIMEOUT_MS = 8000;
-const DEFAULT_MAX_CHARS = 4500;
+const DEFAULT_MAX_CHARS = 3000;
 const MAX_HTML_BYTES = 2 * 1024 * 1024; // 2 MB limite de segurança para parsing DOM
 const MIN_READABLE_CHARS = 80;
 

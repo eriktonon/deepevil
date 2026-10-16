@@ -116,10 +116,10 @@ function renderAnswerMarkdownWithFootnotes(markdownText, turnId, sources = []) {
 }
 
 function renderMarkdownProse(prose, turnId, validSourcesMap, seenFirstRef) {
-  // Limpa rótulo literal "Lead Executivo" caso o modelo o repita e garante separação de cabeçalhos e listas
+  // Limpa rótulo literal "Lead Executivo" / "Síntese Executiva" caso o modelo o repita e garante separação de cabeçalhos e listas
   const normalizedProse = String(prose || '')
     .replace(/\r\n/g, '\n')
-    .replace(/^\s*(?:\*\*|#+\s*)?Lead Executivo(?:\*\*)?[:\s—-]*\n+/i, '')
+    .replace(/^\s*(?:\*\*|#+\s*)?(?:Lead Executivo|S[íi]ntese Executiva|Resumen Ejecutivo|Executive Summary)(?:\*\*)?[:\s—-]*\n+/i, '')
     .replace(/^(#{1,4}\s+[^\n]+)$/gm, '\n\n$1\n\n')
     .replace(/([^\n])\n((?:[-*•]|\d+[.)])\s+)/g, (full, prevChar, listStart, offset, fullStr) => {
       // Se a linha anterior não for item de lista, insere quebra dupla para abrir <ul>/<ol> limpo

@@ -24,7 +24,7 @@ function buildContextualSearchQuery(question, priorTurns = []) {
   const words = cleanQuestion.split(/\s+/).filter(Boolean);
   const needsContext =
     words.length < 7 ||
-    /^(e\b|mas\b|como\b|qual\b|quais\b|quanto\b|por que\b|porque\b|onde\b|quando\b|isso\b|ele\b|ela\b|eles\b|deles\b|disso\b|nesse\b|nessa\b|what about|how about|and\b|why\b)/i.test(cleanQuestion);
+    /^¿?(e\b|mas\b|como\b|qual\b|quais\b|quanto\b|por que\b|porque\b|onde\b|quando\b|isso\b|ele\b|ela\b|eles\b|deles\b|disso\b|nesse\b|nessa\b|what about|how about|and\b|why\b|y\b|pero\b|cómo\b|cuál\b|cuáles\b|qué\b|por qué\b|dónde\b|cuándo\b|quién\b)/i.test(cleanQuestion);
 
   if (!needsContext) {
     return cleanQuestion.slice(0, 380);
