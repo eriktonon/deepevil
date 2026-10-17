@@ -94,6 +94,12 @@ function createApp(options = {}) {
     res.type('application/javascript').sendFile(sseDistPath);
   });
 
+  const faviconSvgPath = path.join(__dirname, '..', 'public', 'favicon.svg');
+  app.get(['/favicon.ico', '/favicon.svg'], (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+    res.type('image/svg+xml').sendFile(faviconSvgPath);
+  });
+
   app.use(express.static(path.join(__dirname, '..', 'public')));
 
   // Healthcheck local + status Qdrant Vector DB

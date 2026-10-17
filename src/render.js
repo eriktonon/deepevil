@@ -19,6 +19,29 @@ function renderDeepEvilLogo(sizeClass = 'logo-md') {
   return `<span class="deepevil-wordmark ${escapeHtml(sizeClass)}" aria-label="DeepEvil"><span class="g-blue">D</span><span class="g-red">e</span><span class="g-yellow">e</span><span class="g-blue">p</span><span class="g-green">E</span><span class="g-red">v</span><span class="g-yellow">i</span><span class="g-blue">l</span></span>`;
 }
 
+/**
+ * Renderiza o ícone "D" nas 4 cores do Google (estilo Google "G" oficial, mas com a letra D).
+ */
+function renderDeepEvilDIcon(size = 22, clipId = 'deepevil-d-clip') {
+  const safeId = escapeHtml(clipId);
+  const s = Number(size) || 22;
+  return `
+    <svg width="${s}" height="${s}" viewBox="0 0 64 64" aria-hidden="true" class="deepevil-d-icon">
+      <defs>
+        <clipPath id="${safeId}">
+          <path fill-rule="evenodd" d="M 12 8 H 32 A 24 24 0 0 1 56 32 A 24 24 0 0 1 32 56 H 12 Z M 23 19 H 32 A 13 13 0 0 1 45 32 A 13 13 0 0 1 32 45 H 23 Z" />
+        </clipPath>
+      </defs>
+      <g clip-path="url(#${safeId})">
+        <polygon fill="#EA4335" points="6,4 60,4 52,18 32,32 6,11" />
+        <polygon fill="#FBBC05" points="6,11 32,32 6,53" />
+        <polygon fill="#34A853" points="6,53 32,32 52,46 60,60 6,60" />
+        <polygon fill="#4285F4" points="32,32 52,18 62,18 62,46 52,46" />
+      </g>
+    </svg>
+  `.trim();
+}
+
 function formatShortDomain(domain = '') {
   return String(domain || '')
     .trim()
@@ -830,6 +853,8 @@ function renderFullPage({ conversations = [], activeConversation = null, envStat
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${escapeHtml(pageTitle)}</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=deepevil-d-2">
+  <link rel="shortcut icon" href="/favicon.ico?v=deepevil-d-2">
   <link rel="stylesheet" href="/styles.css">
   <script src="/vendor/htmx.min.js" defer></script>
   <script src="/vendor/sse.js" defer></script>
@@ -849,10 +874,7 @@ function renderFullPage({ conversations = [], activeConversation = null, envStat
           class="brand-logo"
         >
           <span class="brand-mark" aria-hidden="true">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="11" cy="11" r="8"></circle>
-              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-            </svg>
+            ${renderDeepEvilDIcon(22, 'sidebar-d-clip')}
           </span>
           <span class="brand-text">
             ${renderDeepEvilLogo('logo-sidebar')}
@@ -904,6 +926,7 @@ function renderFullPage({ conversations = [], activeConversation = null, envStat
 module.exports = {
   escapeHtml,
   renderDeepEvilLogo,
+  renderDeepEvilDIcon,
   renderAnswerMarkdownWithFootnotes,
   renderTurnSourcesFootnotes,
   renderPipelineStatusBadge,

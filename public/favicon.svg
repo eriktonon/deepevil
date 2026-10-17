@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <clipPath id="google-d-shape">
+      <path
+        fill-rule="evenodd"
+        d="M 12 8 H 32 A 24 24 0 0 1 56 32 A 24 24 0 0 1 32 56 H 12 Z M 23 19 H 32 A 13 13 0 0 1 45 32 A 13 13 0 0 1 32 45 H 23 Z"
+      />
+    </clipPath>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="#14171d" />
+  <g clip-path="url(#google-d-shape)">
+    <!-- Vermelho Google (#EA4335): Topo do D -->
+    <polygon fill="#EA4335" points="6,4 60,4 52,18 32,32 6,11" />
+    <!-- Amarelo Google (#FBBC05): Haste Vertical Esquerda do D -->
+    <polygon fill="#FBBC05" points="6,11 32,32 6,53" />
+    <!-- Verde Google (#34A853): Base do D -->
+    <polygon fill="#34A853" points="6,53 32,32 52,46 60,60 6,60" />
+    <!-- Azul Google (#4285F4): Arco Direito Principal do D -->
+    <polygon fill="#4285F4" points="32,32 52,18 62,18 62,46 52,46" />
+  </g>
+</svg>
