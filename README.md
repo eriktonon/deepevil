@@ -59,8 +59,8 @@ BRAVE_SEARCH_API_KEY=keyless
 # Provedor de LLM: ollama | anthropic | openai
 LLM_PROVIDER=ollama
 OLLAMA_BASE_URL=http://127.0.0.1:11434
-OLLAMA_MODEL=granite4.2:latest
-OLLAMA_NUM_CTX=16384
+OLLAMA_MODEL=granite4.2-uncensored:latest
+OLLAMA_NUM_CTX=8192
 
 # Persistência Vetorial Qdrant + SQLite WAL
 QDRANT_URL=http://127.0.0.1:6333
@@ -101,9 +101,12 @@ docker compose up -d searxng
 
 | Método | Rota | Descrição |
 | :--- | :--- | :--- |
-| `GET` | `/` | Interface principal do **DeepEvil** com seletor ao vivo de modelos Ollama |
+| `GET` | `/` | Interface principal do **DeepEvil** com ícone **D** 4-cores e seletor ao vivo de modelos Ollama |
 | `POST` | `/ask` | Registra pergunta (inicial ou *follow-up*) com o modelo LLM selecionado |
-| `GET` | `/stream/:turnId` | Stream SSE em tempo real (`status`, `sources`, `answer`, `done`) |
+| `GET` | `/stream/:turnId` | Stream SSE em tempo real (`status`, `sources`, `answer`, `followups`, `done`) |
+| `GET` | `/turns/:turnId/translate/stream` | Stream SSE de tradução em tempo real (PT/EN/ES/FR/DE/IT) com cache SQLite `0ms` e `think: false` (~277ms TTFT) |
+| `POST` | `/turns/:turnId/translate` | Endpoint REST de tradução de resposta preservando citações `[1][2]` e tabelas Markdown |
+| `GET` | `/turns/:turnId/export.md` | Exportação completa da síntese e fontes verificadas em arquivo Markdown (`.md`) |
 | `GET` | `/api/models` | Lista em tempo real os modelos instalados no servidor Ollama local |
 | `GET` | `/api/qdrant/status` | Verifica conectividade, coleção e contagem de pontos no **Qdrant Vector DB** |
 | `GET` | `/api/qdrant/search?q=...` | Executa busca vetorial semântica sobre respostas e fontes indexadas no Qdrant |
