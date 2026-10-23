@@ -297,6 +297,7 @@ async function streamAnswer({
   onDelta,
   env = process.env,
   selectedModel = '',
+  signal = null,
   requestFn = request,
   customStreamFn = null
 }) {
@@ -306,7 +307,8 @@ async function streamAnswer({
 
   if (typeof customStreamFn === 'function') {
     let rawAccumulated = '';
-    for await (const delta of customStreamFn({ config, systemPrompt, messages, sources, question, priorTurns })) {
+    for await (const delta of customStreamFn({ config, systemPrompt, messages, sources, question, priorTurns, signal })) {
+      if (signal && signal.aborted) break;
       rawAccumulated += delta;
       const clean = sanitizeCitations(rawAccumulated, sources.length);
       if (onDelta) onDelta(delta, clean);
@@ -314,7 +316,8 @@ async function streamAnswer({
     return {
       text: sanitizeCitations(rawAccumulated, sources.length),
       provider: config.provider,
-      model: config.model
+      model: config.model,
+      aborted: Boolean(signal && signal.aborted)
     };
   }
 
@@ -331,13 +334,14 @@ async function streamAnswer({
     return {
       text: fallbackMsg,
       provider: config.provider,
-      model: config.model
+      model: config.model,
+      aborted: false
     };
   }
 
   let rawAccumulated = '';
   const handleToken = (delta) => {
-    if (!delta) return;
+    if (!delta || (signal && signal.aborted)) return;
     rawAccumulated += delta;
     const sanitized = sanitizeCitations(rawAccumulated, sources.length);
     if (onDelta) {
@@ -345,50 +349,66 @@ async function streamAnswer({
     }
   };
 
-  if (config.provider === 'ollama') {
-    await streamFromOllama({
-      baseUrl: config.baseUrl || DEFAULT_OLLAMA_BASE_URL,
-      model: config.model,
-      numCtx: config.numCtx || DEFAULT_OLLAMA_NUM_CTX,
-      systemPrompt,
-      messages,
-      onToken: handleToken,
-      requestFn
-    });
-  } else if (config.provider === 'openai') {
-    await streamFromOpenAI({
-      apiKey: config.apiKey,
-      model: config.model,
-      systemPrompt,
-      messages,
-      onToken: handleToken,
-      requestFn
-    });
-  } else {
-    await streamFromAnthropic({
-      apiKey: config.apiKey,
-      model: config.model,
-      systemPrompt,
-      messages,
-      onToken: handleToken,
-      requestFn
-    });
+  try {
+    if (config.provider === 'ollama') {
+      await streamFromOllama({
+        baseUrl: config.baseUrl || DEFAULT_OLLAMA_BASE_URL,
+        model: config.model,
+        numCtx: config.numCtx || DEFAULT_OLLAMA_NUM_CTX,
+        systemPrompt,
+        messages,
+        onToken: handleToken,
+        signal,
+        requestFn
+      });
+    } else if (config.provider === 'openai') {
+      await streamFromOpenAI({
+        apiKey: config.apiKey,
+        model: config.model,
+        systemPrompt,
+        messages,
+        onToken: handleToken,
+        signal,
+        requestFn
+      });
+    } else {
+      await streamFromAnthropic({
+        apiKey: config.apiKey,
+        model: config.model,
+        systemPrompt,
+        messages,
+        onToken: handleToken,
+        signal,
+        requestFn
+      });
+    }
+  } catch (err) {
+    if (signal && signal.aborted) {
+      return {
+        text: sanitizeCitations(rawAccumulated, sources.length),
+        provider: config.provider,
+        model: config.model,
+        aborted: true
+      };
+    }
+    throw err;
   }
 
   return {
     text: sanitizeCitations(rawAccumulated, sources.length),
     provider: config.provider,
-    model: config.model
+    model: config.model,
+    aborted: Boolean(signal && signal.aborted)
   };
 }
 
-async function streamFromOllama({ baseUrl, model, numCtx, systemPrompt, messages, onToken, requestFn }) {
+async function streamFromOllama({ baseUrl, model, numCtx, systemPrompt, messages, onToken, signal, requestFn }) {
   const ollamaMessages = [
     { role: 'system', content: systemPrompt },
     ...messages
   ];
 
-  const response = await requestFn(`${baseUrl}/api/chat`, {
+  const reqOpts = {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
@@ -404,7 +424,10 @@ async function streamFromOllama({ baseUrl, model, numCtx, systemPrompt, messages
       },
       messages: ollamaMessages
     })
-  });
+  };
+  if (signal) reqOpts.signal = signal;
+
+  const response = await requestFn(`${baseUrl}/api/chat`, reqOpts);
 
   if (response.statusCode < 200 || response.statusCode >= 300) {
     const errBody = await response.body.text().catch(() => '');
@@ -413,11 +436,13 @@ async function streamFromOllama({ baseUrl, model, numCtx, systemPrompt, messages
 
   let buffer = '';
   for await (const chunk of response.body) {
+    if (signal && signal.aborted) break;
     buffer += Buffer.isBuffer(chunk) ? chunk.toString('utf-8') : String(chunk);
     const lines = buffer.split(/\r?\n/);
     buffer = lines.pop() || '';
 
     for (const line of lines) {
+      if (signal && signal.aborted) break;
       const trimmed = line.trim();
       if (!trimmed) continue;
       const cleanLine = trimmed.startsWith('data:') ? trimmed.slice(5).trim() : trimmed;
@@ -437,7 +462,7 @@ async function streamFromOllama({ baseUrl, model, numCtx, systemPrompt, messages
     }
   }
 
-  if (buffer.trim()) {
+  if (buffer.trim() && !(signal && signal.aborted)) {
     const cleanLine = buffer.trim().startsWith('data:') ? buffer.trim().slice(5).trim() : buffer.trim();
     try {
       const event = JSON.parse(cleanLine);
@@ -449,8 +474,8 @@ async function streamFromOllama({ baseUrl, model, numCtx, systemPrompt, messages
   }
 }
 
-async function streamFromAnthropic({ apiKey, model, systemPrompt, messages, onToken, requestFn }) {
-  const response = await requestFn(ANTHROPIC_API_URL, {
+async function streamFromAnthropic({ apiKey, model, systemPrompt, messages, onToken, signal, requestFn }) {
+  const reqOpts = {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -465,7 +490,10 @@ async function streamFromAnthropic({ apiKey, model, systemPrompt, messages, onTo
       system: systemPrompt,
       messages
     })
-  });
+  };
+  if (signal) reqOpts.signal = signal;
+
+  const response = await requestFn(ANTHROPIC_API_URL, reqOpts);
 
   if (response.statusCode < 200 || response.statusCode >= 300) {
     const errBody = await response.body.text().catch(() => '');
@@ -473,6 +501,7 @@ async function streamFromAnthropic({ apiKey, model, systemPrompt, messages, onTo
   }
 
   await parseSseStream(response.body, (dataStr) => {
+    if (signal && signal.aborted) return;
     if (!dataStr || dataStr === '[DONE]') return;
     try {
       const event = JSON.parse(dataStr);
@@ -487,13 +516,13 @@ async function streamFromAnthropic({ apiKey, model, systemPrompt, messages, onTo
   });
 }
 
-async function streamFromOpenAI({ apiKey, model, systemPrompt, messages, onToken, requestFn }) {
+async function streamFromOpenAI({ apiKey, model, systemPrompt, messages, onToken, signal, requestFn }) {
   const openAiMessages = [
     { role: 'system', content: systemPrompt },
     ...messages
   ];
 
-  const response = await requestFn(OPENAI_API_URL, {
+  const reqOpts = {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -506,7 +535,10 @@ async function streamFromOpenAI({ apiKey, model, systemPrompt, messages, onToken
       stream: true,
       messages: openAiMessages
     })
-  });
+  };
+  if (signal) reqOpts.signal = signal;
+
+  const response = await requestFn(OPENAI_API_URL, reqOpts);
 
   if (response.statusCode < 200 || response.statusCode >= 300) {
     const errBody = await response.body.text().catch(() => '');

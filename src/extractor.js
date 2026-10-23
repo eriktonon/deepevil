@@ -35,6 +35,15 @@ async function extractReadablePage(targetUrl, fallbackTitle = '', options = {}) 
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const externalSignal = options.signal || null;
+  const onExternalAbort = () => controller.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      clearTimeout(timer);
+      return null;
+    }
+    externalSignal.addEventListener('abort', onExternalAbort, { once: true });
+  }
 
   try {
     let currentUrl = parsedUrl.toString();
@@ -138,13 +147,53 @@ async function extractReadablePage(targetUrl, fallbackTitle = '', options = {}) 
     return null;
   } finally {
     clearTimeout(timer);
+    if (externalSignal) {
+      externalSignal.removeEventListener('abort', onExternalAbort);
+    }
+  }
+}
+
+const MIN_SNIPPET_FALLBACK_CHARS = 90;
+
+/**
+ * Constrói uma fonte verificada a partir do snippet rico da SERP quando o site bloqueia
+ * o scraper direto (ex.: Cloudflare/403), garantindo que resumos ricos não sejam perdidos.
+ */
+function buildSnippetFallbackSource(item, maxChars = DEFAULT_MAX_CHARS) {
+  if (!item || typeof item.url !== 'string') return null;
+  const rawDesc = String(item.description || item.content || '').replace(/\s+/g, ' ').trim();
+  if (rawDesc.length < MIN_SNIPPET_FALLBACK_CHARS) return null;
+
+  try {
+    const parsedUrl = new URL(item.url);
+    if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') return null;
+    const domain = parsedUrl.hostname.replace(/^www\./i, '');
+    const title = String(item.title || domain).replace(/\s+/g, ' ').trim();
+    const excerpt = clipAtBoundary(rawDesc, maxChars);
+    const words = excerpt.split(/\s+/).filter(Boolean);
+    return {
+      url: parsedUrl.toString(),
+      title: title || domain,
+      domain,
+      siteName: domain,
+      excerpt,
+      wordCount: words.length,
+      charCount: excerpt.length,
+      isSerpSnippet: true
+    };
+  } catch (_) {
+    return null;
   }
 }
 
 /**
- * Extrai em paralelo os até 6 resultados retornados pelo Brave Search.
- * Renumera sequencialmente ([1], [2], ...) APENAS as páginas cuja extração teve sucesso.
- * Páginas que falharem são descartadas e nunca entram no prompt nem nas citações.
+ * Extrai em paralelo os até 6 resultados retornados pela busca.
+ * - Aplica Early-Cutoff (estilo Perplexity/Kagi): assim que `earlyCutoffCount` (padrão 4)
+ *   páginas são extraídas com sucesso, concede uma janela máxima (`gracePeriodMs`, padrão 1200ms)
+ *   para as restantes e aborta conexões lentas para liberar o LLM imediatamente.
+ * - Se o download DOM falhar mas o item possuir um snippet SERP rico (>= 90 chars),
+ *   utiliza o snippet verificado como fallback (salvo se `allowSnippetFallback === false`).
+ * - Renumera sequencialmente ([1], [2], ...) APENAS as fontes obtidas com sucesso.
  */
 async function extractTopSources(searchResults = [], options = {}) {
   const candidates = Array.isArray(searchResults) ? searchResults.slice(0, 6) : [];
@@ -157,9 +206,49 @@ async function extractTopSources(searchResults = [], options = {}) {
     };
   }
 
-  const settled = await Promise.allSettled(
-    candidates.map((item) => extractReadablePage(item.url, item.title, options))
-  );
+  const earlyCutoffCount = Number(options.earlyCutoffCount ?? 4);
+  const gracePeriodMs = Number(options.gracePeriodMs ?? 1200);
+  const allowSnippetFallback = options.allowSnippetFallback !== false;
+  const maxChars = Number(options.maxChars || process.env.MAX_CHARS_PER_SOURCE || DEFAULT_MAX_CHARS);
+
+  const cutoffController = new AbortController();
+  const externalSignal = options.signal || null;
+  const onExternalAbort = () => cutoffController.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) cutoffController.abort();
+    else externalSignal.addEventListener('abort', onExternalAbort, { once: true });
+  }
+
+  let fastSuccessCount = 0;
+  let graceTimer = null;
+
+  const tasks = candidates.map(async (item) => {
+    const pageResult = await extractReadablePage(item.url, item.title, {
+      ...options,
+      signal: cutoffController.signal
+    });
+
+    if (pageResult && pageResult.excerpt) {
+      fastSuccessCount += 1;
+      if (fastSuccessCount >= earlyCutoffCount && !graceTimer && gracePeriodMs > 0) {
+        graceTimer = setTimeout(() => {
+          cutoffController.abort();
+        }, gracePeriodMs);
+      }
+      return pageResult;
+    }
+
+    if (allowSnippetFallback) {
+      return buildSnippetFallbackSource(item, maxChars);
+    }
+    return null;
+  });
+
+  const settled = await Promise.allSettled(tasks);
+  if (graceTimer) clearTimeout(graceTimer);
+  if (externalSignal) {
+    externalSignal.removeEventListener('abort', onExternalAbort);
+  }
 
   const sources = [];
   const skippedUrls = [];
@@ -222,5 +311,6 @@ function clipAtBoundary(text, maxChars) {
 
 module.exports = {
   extractReadablePage,
-  extractTopSources
+  extractTopSources,
+  buildSnippetFallbackSource
 };

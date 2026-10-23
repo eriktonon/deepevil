@@ -252,7 +252,7 @@ function formatInlineMarkdownAndCitations(text, turnId, validSourcesMap, seenFir
   // Italic *text*
   escaped = escaped.replace(/(^|[^*])\*([^*]+)\*(?!\*)/g, '$1<em>$2</em>');
 
-  // Citações [1][2] -> Links de rodapé com pílula de domínio confiável estilo Perplexity ([1] domain)
+  // Citações [1][2] -> Links de rodapé com pílula de domínio confiável + Hover Popover Card estilo Perplexity
   escaped = escaped.replace(/\[(\d+)\]/g, (full, numStr) => {
     const idx = Number(numStr);
     const src = validSourcesMap.get(idx);
@@ -267,17 +267,68 @@ function formatInlineMarkdownAndCitations(text, turnId, validSourcesMap, seenFir
     const shortHost = formatShortDomain(src.domain);
     const tooltip = `[${idx}] ${src.title} — ${src.domain}`;
     const hostBadge = shortHost ? `<span class="citation-host">${escapeHtml(shortHost)}</span>` : '';
-    return `<sup class="footnote-ref"><a href="#source-${turnId}-${idx}"${refIdAttr} class="citation-link" data-source-id="source-${turnId}-${idx}" title="${escapeHtml(tooltip)}">[${idx}]${hostBadge}</a></sup>`;
+    const snippetPreview = String(src.excerpt || '').replace(/\s+/g, ' ').trim().slice(0, 170);
+    const hasMoreSnippet = String(src.excerpt || '').length > 170;
+    const popoverHtml = `<span class="citation-popover" role="tooltip"><span class="citation-popover-head"><span class="citation-popover-badge">[${idx}]</span><span class="citation-popover-domain">${escapeHtml(src.domain || '')}</span></span><span class="citation-popover-title">${escapeHtml(src.title || src.domain || '')}</span>${snippetPreview ? `<span class="citation-popover-excerpt">${escapeHtml(snippetPreview)}${hasMoreSnippet ? '…' : ''}</span>` : ''}</span>`;
+    return `<sup class="footnote-ref"><a href="#source-${turnId}-${idx}"${refIdAttr} class="citation-link" data-source-id="source-${turnId}-${idx}" title="${escapeHtml(tooltip)}">[${idx}]${hostBadge}</a>${popoverHtml}</sup>`;
   });
 
   return escaped;
 }
 
 /**
- * Gera perguntas de acompanhamento (Follow-up) contextuais no idioma da consulta
- * e ancoradas nos títulos das fontes extraídas (estilo Perplexity "Relacionadas").
+ * Extrai entidades técnicas, cabeçalhos e subtópicos reais das fontes e do Markdown
+ * para gerar perguntas de acompanhamento (Follow-up) específicas ao conteúdo.
  */
-function buildContextualFollowUps(question = '', sources = []) {
+function extractKeyConceptsFromTurn(sources = [], answerMarkdown = '', question = '') {
+  const concepts = [];
+  const lowerQuestion = String(question || '').toLowerCase();
+  const seen = new Set();
+
+  const addCandidate = (raw) => {
+    const clean = String(raw || '')
+      .replace(/\[(\d+)\]/g, '')
+      .replace(/[*`#_>|~]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (clean.length < 4 || clean.length > 52) return;
+    const key = clean.toLowerCase();
+    if (seen.has(key) || key === lowerQuestion) return;
+    if (/^(fontes|conclusão|resumo|introdução|visão geral|overview|summary|referências)$/i.test(clean)) return;
+    seen.add(key);
+    concepts.push(clean);
+  };
+
+  // 1. Cabeçalhos ## da resposta gerada
+  const headingMatches = String(answerMarkdown || '').matchAll(/^#{2,4}\s+([^\n]+)/gm);
+  for (const m of headingMatches) {
+    addCandidate(m[1]);
+    if (concepts.length >= 3) break;
+  }
+
+  // 2. Termos destacados em **negrito** ou `código` na resposta ou nos trechos das fontes
+  const boldMatches = String(answerMarkdown || '').matchAll(/\*\*([^*]{4,42})\*\*|`([^`]{3,38})`/g);
+  for (const m of boldMatches) {
+    addCandidate(m[1] || m[2]);
+    if (concepts.length >= 5) break;
+  }
+
+  // 3. Títulos limpos das fontes extraídas
+  for (const s of sources) {
+    if (!s?.title) continue;
+    const shortTitle = String(s.title).split(/\s+[-—|:]\s+/)[0].trim();
+    addCandidate(shortTitle);
+    if (concepts.length >= 6) break;
+  }
+
+  return concepts;
+}
+
+/**
+ * Gera perguntas de acompanhamento (Follow-up) dinâmicas orientadas ao conteúdo real
+ * das fontes e seções extraídas no idioma da consulta (estilo Perplexity Pro / Genspark).
+ */
+function buildContextualFollowUps(question = '', sources = [], answerMarkdown = '') {
   const q = String(question || '').trim();
   const lowerQ = q.toLowerCase();
   const isSpanish =
@@ -288,29 +339,51 @@ function buildContextualFollowUps(question = '', sources = []) {
     /\b(what|how|why|when|where|architecture|performance|explained|between)\b/i.test(lowerQ);
 
   const topic = q.length > 58 ? `${q.slice(0, 55).trim()}…` : (q || 'este tema');
+  const concepts = extractKeyConceptsFromTurn(sources, answerMarkdown, q);
+  const c1 = concepts[0] || null;
+  const c2 = concepts[1] || null;
+  const c3 = concepts[2] || null;
 
   if (isSpanish) {
     return [
-      `¿Cuáles fueron las consecuencias políticas y de seguridad a largo plazo de ${topic}?`,
-      `¿Cuál es la cronología detallada y los hechos clave verificados sobre ${topic}?`,
-      `¿Qué investigaciones oficiales y medidas se tomaron tras ${topic}?`,
+      c1
+        ? `¿Cómo se relaciona "${c1}" con el desarrollo y las consecuencias de ${topic}?`
+        : `¿Cuáles fueron las consecuencias políticas y de seguridad a largo plazo de ${topic}?`,
+      c2
+        ? `¿Qué detalles clave aportan las fuentes verificadas sobre ${c2}?`
+        : `¿Cuál es la cronología detallada y los hechos clave verificados sobre ${topic}?`,
+      c3
+        ? `¿Qué impacto técnico o histórico tuvo ${c3} según los documentos extraídos?`
+        : `¿Qué investigaciones oficiales y medidas se tomaron tras ${topic}?`,
       `¿Cómo impactó ${topic} en la geopolítica y la regulación internacional?`
     ];
   }
 
   if (isEnglish) {
     return [
-      `What are the key architectural trade-offs and edge cases of ${topic}?`,
-      `How does ${topic} compare in real-world benchmarks and production workloads?`,
-      `What are the security implications and failure modes of ${topic}?`,
-      `Can you show a step-by-step technical breakdown of ${topic}?`
+      c1
+        ? `How does ${c1} impact the architecture and behavior of ${topic}?`
+        : `What are the key architectural trade-offs and edge cases of ${topic}?`,
+      c2
+        ? `Can you provide a deep-dive technical breakdown of ${c2}?`
+        : `How does ${topic} compare in real-world benchmarks and production workloads?`,
+      c3
+        ? `What are the security implications and failure modes involving ${c3}?`
+        : `What are the security implications and failure modes of ${topic}?`,
+      `How can ${topic} be optimized or mitigated in production environments?`
     ];
   }
 
   return [
-    `Quais são os detalhes técnicos mais críticos e a cronologia completa sobre ${topic}?`,
-    `Quais foram as consequências práticas e o impacto de longo prazo de ${topic}?`,
-    `Como as diferentes fontes extraídas comparam as causas e desdobramentos de ${topic}?`,
+    c1
+      ? `Como "${c1}" funciona na prática dentro do contexto de ${topic}?`
+      : `Quais são os detalhes técnicos mais críticos e a cronologia completa sobre ${topic}?`,
+    c2
+      ? `Quais são os mecanismos internos e casos de uso de ${c2}?`
+      : `Quais foram as consequências práticas e o impacto de longo prazo de ${topic}?`,
+    c3
+      ? `Como as fontes extraídas detalham o papel de ${c3}?`
+      : `Como as diferentes fontes extraídas comparam as causas e desdobramentos de ${topic}?`,
     `Quais pontos de atenção, falhas ou vulnerabilidades existem em torno de ${topic}?`
   ];
 }
@@ -338,7 +411,9 @@ function renderTurnSourcesFootnotes(turnId, sources = [], meta = {}) {
     `;
   }
 
-  const followUps = meta.status === 'completed' ? buildContextualFollowUps(meta.question || '', sources) : [];
+  const followUps = meta.status === 'completed'
+    ? buildContextualFollowUps(meta.question || '', sources, meta.answerMarkdown || '')
+    : [];
   const followUpsHtml =
     followUps.length > 0
       ? `
@@ -369,6 +444,15 @@ function renderTurnSourcesFootnotes(turnId, sources = [], meta = {}) {
     <div class="turn-action-bar" aria-label="Ações da resposta">
       <button type="button" class="turn-action-btn" data-copy-turn="${turnId}" title="Copiar resposta para a área de transferência">
         <span class="copy-btn-label">Copiar</span>
+      </button>
+
+      <button
+        type="button"
+        class="turn-action-btn turn-rewrite-btn"
+        data-rewrite-turn="${turnId}"
+        title="Regerar resposta com o modelo LLM selecionado reutilizando as fontes já extraídas (0ms de busca web)"
+      >
+        <span class="rewrite-btn-label">↻ Regerar</span>
       </button>
 
       <a
@@ -500,11 +584,18 @@ function renderPipelineStatusBadge(status, details = {}) {
       : 'status-active';
 
   const text = labelMap[status] || labelMap.pending;
+  const isStoppable =
+    details.turnId &&
+    (status === 'pending' || status === 'searching' || status === 'extracting' || status === 'streaming');
+  const stopBtnHtml = isStoppable
+    ? `<button type="button" class="pipeline-stop-btn" data-stop-turn="${escapeHtml(details.turnId)}" title="Interromper geração imediatamente">■ Parar</button>`
+    : '';
 
   return `
     <div class="pipeline-status ${stateClass}" data-status="${escapeHtml(status)}">
       <span class="status-indicator" aria-hidden="true"></span>
       <span class="status-text tabular-nums">${text}</span>
+      ${stopBtnHtml}
     </div>
   `;
 }
@@ -517,6 +608,7 @@ function renderTurnCard(turn, options = {}) {
   const sources = Array.isArray(turn.sources) ? turn.sources : [];
 
   const statusHtml = renderPipelineStatusBadge(turn.status, {
+    turnId: turn.id,
     searchQuery: turn.search_query,
     attemptedCount: turn.attempted_urls_count,
     extractedCount: turn.extracted_sources_count || sources.length,
@@ -533,7 +625,8 @@ function renderTurnCard(turn, options = {}) {
 
   const sourcesHtml = renderTurnSourcesFootnotes(turn.id, sources, {
     status: turn.status,
-    question: turn.question
+    question: turn.question,
+    answerMarkdown: turn.answer_markdown
   });
 
   const innerContent = isLive
@@ -735,6 +828,18 @@ function renderComposerForm(activeConversation = null, isOob = false, options = 
             ></textarea>
           </div>
 
+          <!-- Seletor de Modo de Foco (Web / SecOps / Code / Academic / Híbrido) -->
+          <div class="focus-selector-wrap" title="Selecionar modo de foco da pesquisa">
+            <label for="focus-select" class="sr-only">Modo de Foco</label>
+            <select id="focus-select" name="focusMode" class="google-focus-select">
+              <option value="web"${options.activeFocus === 'web' || !options.activeFocus ? ' selected' : ''}>Foco: Web</option>
+              <option value="secops"${options.activeFocus === 'secops' ? ' selected' : ''}>Foco: SecOps / CVE</option>
+              <option value="code"${options.activeFocus === 'code' ? ' selected' : ''}>Foco: Code / Docs</option>
+              <option value="academic"${options.activeFocus === 'academic' ? ' selected' : ''}>Foco: Academic</option>
+              <option value="hybrid"${options.activeFocus === 'hybrid' ? ' selected' : ''}>Foco: Híbrido (Local + Web)</option>
+            </select>
+          </div>
+
           <!-- Seletor Dinâmico de LLM (Ollama / Local) -->
           <div class="model-selector-wrap" title="Selecionar modelo LLM do Ollama para esta pesquisa">
             <label for="model-select" class="sr-only">Modelo LLM</label>
@@ -927,6 +1032,8 @@ module.exports = {
   escapeHtml,
   renderDeepEvilLogo,
   renderDeepEvilDIcon,
+  extractKeyConceptsFromTurn,
+  buildContextualFollowUps,
   renderAnswerMarkdownWithFootnotes,
   renderTurnSourcesFootnotes,
   renderPipelineStatusBadge,

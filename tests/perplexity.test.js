@@ -6,18 +6,22 @@ const http = require('node:http');
 const { Readable } = require('node:stream');
 
 const { createDatabase } = require('../src/db');
-const { searchBrave, buildContextualSearchQuery } = require('../src/search');
-const { extractReadablePage, extractTopSources } = require('../src/extractor');
+const { FOCUS_MODES, applyFocusModeToQuery, searchBrave, buildContextualSearchQuery } = require('../src/search');
+const { extractReadablePage, extractTopSources, buildSnippetFallbackSource } = require('../src/extractor');
+const { projectVectorToDim, embedTextSemantic } = require('../src/qdrant');
 const {
   buildConversationMessages,
   sanitizeCitations,
   streamAnswer
 } = require('../src/llm');
 const {
+  extractKeyConceptsFromTurn,
+  buildContextualFollowUps,
   renderAnswerMarkdownWithFootnotes,
-  renderTurnSourcesFootnotes
+  renderTurnSourcesFootnotes,
+  renderPipelineStatusBadge
 } = require('../src/render');
-const { createApp } = require('../src/server');
+const { createApp, createFrameBatcher } = require('../src/server');
 
 function makeRichArticleHtml(title, bodyParagraph) {
   return `<!DOCTYPE html>
@@ -651,6 +655,345 @@ test('6. Botão de Tradução com IA (/turns/:turnId/translate) traduz o Markdow
     server.close();
     db.close();
   }
+});
+
+test('7. Otimização #1: Early-Cutoff na extração corta alvos lentos após 4 sucessos e SERP Snippet Fallback salva resumos ricos', async () => {
+  const candidates = [
+    { url: 'https://fast1.dev/a', title: 'Fast 1' },
+    { url: 'https://fast2.dev/b', title: 'Fast 2' },
+    { url: 'https://fast3.dev/c', title: 'Fast 3' },
+    { url: 'https://fast4.dev/d', title: 'Fast 4' },
+    {
+      url: 'https://cloudflare-blocked.dev/e',
+      title: 'Cloudflare Blocked',
+      description: 'Este é um resumo rico retornado diretamente pela SERP com mais de noventa caracteres explicando detalhadamente a arquitetura de proteção e mitigação DDoS.'
+    },
+    { url: 'https://hanging-host.dev/f', title: 'Hanging Host 5s' }
+  ];
+
+  const mockRequestFn = async (url, opts) => {
+    if (url.includes('cloudflare-blocked')) {
+      return { statusCode: 403, headers: {}, body: { dump: async () => {} } };
+    }
+    if (url.includes('hanging-host')) {
+      await new Promise((resolve, reject) => {
+        const t = setTimeout(resolve, 4000);
+        if (opts?.signal) {
+          opts.signal.addEventListener('abort', () => {
+            clearTimeout(t);
+            reject(new Error('Aborted by Early-Cutoff'));
+          });
+        }
+      });
+    }
+    const html = makeRichArticleHtml(
+      `Artigo Rápido ${url}`,
+      `Conteúdo técnico denso extraído em poucos milissegundos de ${url} com mais de oitenta caracteres verificados para leitura imediata.`
+    );
+    return {
+      statusCode: 200,
+      headers: { 'content-type': 'text/html; charset=utf-8' },
+      body: Readable.from([Buffer.from(html, 'utf-8')])
+    };
+  };
+
+  const t0 = Date.now();
+  const outcome = await extractTopSources(candidates, {
+    requestFn: mockRequestFn,
+    earlyCutoffCount: 4,
+    gracePeriodMs: 60
+  });
+  const elapsed = Date.now() - t0;
+
+  assert.ok(elapsed < 800, `Early-Cutoff deve abortar o host lento em ~60ms em vez de esperar 4000ms (levou ${elapsed}ms)`);
+  // 4 páginas rápidas + 1 página bloqueada mas recuperada via SERP Snippet Fallback = 5 fontes
+  assert.equal(outcome.succeededCount, 5);
+  const snippetSource = outcome.sources.find((s) => s.domain === 'cloudflare-blocked.dev');
+  assert.ok(snippetSource, 'Deve recuperar a fonte bloqueada pelo Cloudflare usando o snippet rico da SERP');
+  assert.equal(snippetSource.isSerpSnippet, true);
+});
+
+test('8. Otimização #2: Focus Modes (web, secops, code, academic, hybrid) enriquecem queries e fundem conhecimento do Qdrant', async () => {
+  assert.ok(FOCUS_MODES.secops);
+  assert.ok(FOCUS_MODES.code);
+  assert.ok(FOCUS_MODES.academic);
+  assert.ok(FOCUS_MODES.hybrid);
+
+  const secopsQuery = applyFocusModeToQuery('ftrace linux kernel', 'secops');
+  assert.match(secopsQuery, /CVE exploit advisory vulnerability/);
+
+  const codeQuery = buildContextualSearchQuery('redis cluster', [], 'code');
+  assert.match(codeQuery, /architecture implementation source code/);
+
+  // Verifica que o modo hybrid combina resultados do Qdrant com resultados Web no /stream/:turnId
+  const db = createDatabase(':memory:');
+  const app = createApp({
+    db,
+    qdrant: {
+      checkHealth: async () => ({ online: true }),
+      indexTurn: async () => true,
+      deleteConversationPoints: async () => true,
+      searchKnowledge: async () => [],
+      searchHybridSources: async () => [
+        {
+          url: 'http://127.0.0.1:6333/dashboard#/collections/pe-agents-ibm-context',
+          title: '[Base Homelab] Arquitetura OPNsense & Proxmox',
+          domain: 'homelab.local.kb',
+          siteName: 'Homelab Knowledge Base',
+          excerpt: 'Documentação local verificada no Qdrant sobre a topologia de rede do Homelab.',
+          wordCount: 12,
+          charCount: 79
+        }
+      ]
+    },
+    searchFn: async () => ({
+      results: [{ url: 'https://opnsense.org/docs', title: 'OPNsense Official Docs' }],
+      error: null
+    }),
+    extractFn: async (results) => ({
+      sources: results.map((r, i) => ({
+        citationIndex: i + 1,
+        url: r.url,
+        title: r.title,
+        domain: 'opnsense.org',
+        siteName: 'OPNsense',
+        excerpt: 'Official documentation for OPNsense firewall configuration.',
+        wordCount: 7,
+        charCount: 59
+      })),
+      attemptedCount: 1,
+      succeededCount: 1
+    }),
+    streamAnswerFn: async ({ sources, onDelta }) => {
+      const txt = `Combinando a fonte web [1] com a memória local do Homelab [2].`;
+      if (onDelta) onDelta(txt, txt);
+      return { text: txt, provider: 'ollama', model: 'granite4.2-uncensored:latest' };
+    }
+  });
+
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+
+  try {
+    const askRes = await fetch(`http://127.0.0.1:${port}/ask`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'HX-Request': 'true' },
+      body: new URLSearchParams({
+        question: 'Como está configurado o firewall?',
+        conversationId: '',
+        model: 'granite4.2-uncensored:latest',
+        focusMode: 'hybrid'
+      })
+    });
+    assert.equal(askRes.status, 200);
+
+    const sseRes = await fetch(`http://127.0.0.1:${port}/stream/1`);
+    const sseText = await sseRes.text();
+    assert.match(sseText, /opnsense\.org/);
+    assert.match(sseText, /homelab\.local\.kb/);
+    assert.match(sseText, /href="#source-1-2"/);
+  } finally {
+    server.close();
+    db.close();
+  }
+});
+
+test('9. Otimização #3: Embeddings semânticos reais bge-m3 via Ollama (/api/embed) com projeção L2 1024d -> 384d', async () => {
+  const fake1024 = Array.from({ length: 1024 }, (_, i) => Math.sin(i * 0.1));
+  const emb = await embedTextSemantic('arquitetura de busca vetorial', {
+    env: { OLLAMA_BASE_URL: 'http://127.0.0.1:11434', OLLAMA_EMBED_MODEL: 'bge-m3:latest' },
+    httpRequest: async (url) => {
+      assert.match(url, /\/api\/embed$/);
+      return {
+        statusCode: 200,
+        body: {
+          json: async () => ({ embeddings: [fake1024] })
+        }
+      };
+    }
+  });
+
+  assert.equal(emb.semantic, true);
+  assert.equal(emb.model, 'bge-m3:latest');
+  assert.equal(emb.rawVector.length, 1024);
+  assert.equal(emb.vector384.length, 384);
+
+  const norm = Math.sqrt(emb.vector384.reduce((acc, v) => acc + v * v, 0));
+  assert.ok(Math.abs(norm - 1.0) < 0.01, `Vetor projetado deve estar L2-normalizado (norma=${norm})`);
+});
+
+test('10. Otimização #4: Follow-ups dinâmicos extraem cabeçalhos Markdown, entidades em negrito e títulos reais das fontes', () => {
+  const sources = [
+    { title: 'eBPF XDP High-Performance Packet Processing — Kernel Docs', domain: 'kernel.org', url: 'https://kernel.org/xdp' },
+    { title: 'DPDK Poll Mode Driver Benchmarks — Intel', domain: 'intel.com', url: 'https://intel.com/dpdk' }
+  ];
+  const answerMd = [
+    'O **XDP (eXpress Data Path)** processa pacotes diretamente no driver antes da alocação de `sk_buff` [1].',
+    '## Comparativo de Latência em Kernel 6.x',
+    'O **DPDK** opera em user-space via bypass de kernel [2].'
+  ].join('\n');
+
+  const concepts = extractKeyConceptsFromTurn(sources, answerMd, 'XDP vs DPDK');
+  assert.ok(concepts.some((c) => /Comparativo de Latência/i.test(c)));
+  assert.ok(concepts.some((c) => /XDP|sk_buff/i.test(c)));
+
+  const followUps = buildContextualFollowUps('XDP vs DPDK', sources, answerMd);
+  assert.equal(followUps.length, 4);
+  assert.match(followUps[0], /Comparativo de Latência/i);
+  assert.match(followUps[0], /XDP vs DPDK/);
+});
+
+test('11. Otimização #5: Botão Regerar (/turns/:turnId/rewrite) troca LLM reutilizando fontes (0 chamadas web) e Stop (/turns/:turnId/stop) interrompe stream', async () => {
+  const db = createDatabase(':memory:');
+  let webSearchCalls = 0;
+  let webExtractCalls = 0;
+
+  const app = createApp({
+    db,
+    qdrant: {
+      checkHealth: async () => ({ online: true }),
+      indexTurn: async () => true,
+      deleteConversationPoints: async () => true,
+      searchKnowledge: async () => []
+    },
+    searchFn: async () => {
+      webSearchCalls += 1;
+      return {
+        results: [{ url: 'https://kernel.org/ftrace', title: 'Ftrace Kernel Docs' }],
+        error: null
+      };
+    },
+    extractFn: async (results) => {
+      webExtractCalls += 1;
+      return {
+        sources: results.map((r, idx) => ({
+          citationIndex: idx + 1,
+          url: r.url,
+          title: r.title,
+          domain: 'kernel.org',
+          siteName: 'Kernel',
+          excerpt: 'Ftrace internal hooking mechanism in the Linux kernel.',
+          wordCount: 8,
+          charCount: 54
+        })),
+        attemptedCount: 1,
+        succeededCount: 1
+      };
+    },
+    streamAnswerFn: async ({ selectedModel, signal, onDelta }) => {
+      if (selectedModel === 'slow-stoppable-model') {
+        onDelta('Início parcial da resposta [1] ', 'Início parcial da resposta [1] ');
+        await new Promise((resolve) => {
+          const t = setTimeout(resolve, 3000);
+          if (signal) {
+            signal.addEventListener('abort', () => {
+              clearTimeout(t);
+              resolve();
+            });
+          }
+        });
+        return {
+          text: 'Início parcial da resposta [1]',
+          provider: 'ollama',
+          model: selectedModel,
+          aborted: Boolean(signal && signal.aborted)
+        };
+      }
+      const msg = `Síntese gerada pelo modelo ${selectedModel} [1].`;
+      if (onDelta) onDelta(msg, msg);
+      return { text: msg, provider: 'ollama', model: selectedModel, aborted: false };
+    }
+  });
+
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  try {
+    // 11.1 Cria o turno 1 e executa o stream inicial
+    await fetch(`${baseUrl}/ask`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'HX-Request': 'true' },
+      body: new URLSearchParams({ question: 'O que é ftrace?', model: 'granite4.2-uncensored:latest' })
+    });
+    const sse1 = await (await fetch(`${baseUrl}/stream/1`)).text();
+    assert.match(sse1, /Síntese gerada pelo modelo granite4\.2-uncensored:latest/);
+    assert.equal(webSearchCalls, 1);
+    assert.equal(webExtractCalls, 1);
+
+    // 11.2 Aciona /turns/1/rewrite trocando para qwen2.5-coder:14b -> 0 novas chamadas de busca/extração web!
+    const rewriteRes = await fetch(`${baseUrl}/turns/1/rewrite`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'qwen2.5-coder:14b' })
+    });
+    const rewriteJson = await rewriteRes.json();
+    assert.equal(rewriteJson.ok, true);
+    assert.equal(rewriteJson.model, 'qwen2.5-coder:14b');
+    assert.equal(rewriteJson.sourcesCount, 1);
+
+    const sseRewrite = await (await fetch(`${baseUrl}/stream/1`)).text();
+    assert.match(sseRewrite, /Síntese gerada pelo modelo qwen2\.5-coder:14b/);
+    assert.equal(webSearchCalls, 1, 'Rewrite NÃO deve refazer a busca na web');
+    assert.equal(webExtractCalls, 1, 'Rewrite NÃO deve refazer a extração DOM');
+
+    // 11.3 Testa Stop Generation (/turns/1/stop) durante um stream lento
+    await fetch(`${baseUrl}/turns/1/rewrite`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'slow-stoppable-model' })
+    });
+
+    const streamPromise = fetch(`${baseUrl}/stream/1`).then((r) => r.text());
+    await new Promise((r) => setTimeout(r, 60));
+
+    const stopRes = await fetch(`${baseUrl}/turns/1/stop`, { method: 'POST' });
+    const stopJson = await stopRes.json();
+    assert.equal(stopJson.ok, true);
+    assert.equal(stopJson.stopped, true);
+
+    const stoppedSse = await streamPromise;
+    assert.match(stoppedSse, /Geração interrompida pelo operador/);
+  } finally {
+    server.close();
+    db.close();
+  }
+});
+
+test('12. Otimização #6: Hover Preview Card (.citation-popover) nas citações inline e Frame Batching SSE (createFrameBatcher)', async () => {
+  const sources = [
+    {
+      citationIndex: 1,
+      url: 'https://sqlite.org/wal.html',
+      title: 'Write-Ahead Logging in SQLite',
+      domain: 'sqlite.org',
+      excerpt: 'WAL provides concurrency because readers do not block writers.',
+      wordCount: 9
+    }
+  ];
+
+  const html = renderAnswerMarkdownWithFootnotes('O modo WAL é rápido [1].', 10, sources);
+  assert.match(html, /class="citation-popover"/);
+  assert.match(html, /class="citation-popover-domain">sqlite\.org<\/span>/);
+  assert.match(html, /class="citation-popover-title">Write-Ahead Logging in SQLite<\/span>/);
+  assert.match(html, /class="citation-popover-excerpt">WAL provides concurrency/);
+
+  // Verifica que o badge de status em streaming possui o botão data-stop-turn
+  const badgeHtml = renderPipelineStatusBadge('streaming', { turnId: 10, provider: 'ollama', extractedCount: 1 });
+  assert.match(badgeHtml, /data-stop-turn="10"/);
+
+  // Testa createFrameBatcher: 1º frame sai em 0ms, próximos 4 dentro da janela são agrupados em 1 único frame
+  const emitted = [];
+  const batcher = createFrameBatcher((val) => emitted.push(val), 50);
+  batcher.push('t1');
+  batcher.push('t2');
+  batcher.push('t3');
+  batcher.push('t4');
+  assert.deepEqual(emitted, ['t1'], 'O primeiro token deve sair imediatamente (0ms TTFT) e os seguintes aguardam a janela');
+  batcher.flush();
+  assert.deepEqual(emitted, ['t1', 't4'], 'O flush final emite apenas o estado acumulado mais recente');
 });
 
 

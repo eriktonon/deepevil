@@ -9,14 +9,63 @@ const DUCKDUCKGO_HTML_ENDPOINT = 'https://html.duckduckgo.com/html/';
 const BING_HTML_ENDPOINT = 'https://www.bing.com/search';
 const MAX_RESULTS = 6;
 
+const FOCUS_MODES = {
+  web: {
+    id: 'web',
+    label: 'Web',
+    querySuffix: ''
+  },
+  secops: {
+    id: 'secops',
+    label: 'SecOps / CVE',
+    querySuffix: 'CVE exploit advisory vulnerability writeup technical analysis'
+  },
+  code: {
+    id: 'code',
+    label: 'Code / Docs',
+    querySuffix: 'architecture implementation source code documentation example'
+  },
+  academic: {
+    id: 'academic',
+    label: 'Academic',
+    querySuffix: 'paper specification RFC research study formal analysis'
+  },
+  hybrid: {
+    id: 'hybrid',
+    label: 'Híbrido (Local + Web)',
+    querySuffix: ''
+  }
+};
+
+/**
+ * Enriquecimento especializado de query segundo o Focus Mode selecionado
+ * (estilo Perplexity Focus / Phind / Perplexica).
+ */
+function applyFocusModeToQuery(rawQuery, focusMode = 'web') {
+  const clean = String(rawQuery || '').trim();
+  const modeKey = String(focusMode || 'web').trim().toLowerCase();
+  const mode = FOCUS_MODES[modeKey];
+  if (!clean || !mode || !mode.querySuffix) {
+    return clean.slice(0, 380);
+  }
+  const lower = clean.toLowerCase();
+  const suffixTokens = mode.querySuffix
+    .split(/\s+/)
+    .filter((tok) => tok && !lower.includes(tok.toLowerCase()));
+  if (suffixTokens.length === 0) {
+    return clean.slice(0, 380);
+  }
+  return `${clean} ${suffixTokens.slice(0, 4).join(' ')}`.trim().slice(0, 380);
+}
+
 /**
  * Constrói uma query de busca contextualizada quando a pergunta atual é um follow-up
  * dentro de uma conversa existente.
  */
-function buildContextualSearchQuery(question, priorTurns = []) {
+function buildContextualSearchQuery(question, priorTurns = [], focusMode = 'web') {
   const cleanQuestion = String(question || '').trim();
   if (!priorTurns || priorTurns.length === 0) {
-    return cleanQuestion.slice(0, 380);
+    return applyFocusModeToQuery(cleanQuestion, focusMode);
   }
 
   const firstQuestion = String(priorTurns[0]?.question || '').trim();
@@ -31,14 +80,14 @@ function buildContextualSearchQuery(question, priorTurns = []) {
   if (firstWords.length > 0) {
     const matchedCount = firstWords.filter((w) => lowerCurrent.includes(w)).length;
     if (matchedCount / firstWords.length >= 0.5) {
-      return cleanQuestion.slice(0, 380);
+      return applyFocusModeToQuery(cleanQuestion, focusMode);
     }
   }
 
   const words = cleanQuestion.split(/\s+/).filter(Boolean);
   // Uma única palavra isolada (ex.: "granadas", "novelas") é tratada como novo tópico direto
   if (words.length === 1 && !/^(isso|ele|ela|eles|elas|porquê|porque|why|how)$/i.test(words[0])) {
-    return cleanQuestion.slice(0, 380);
+    return applyFocusModeToQuery(cleanQuestion, focusMode);
   }
 
   const needsContext =
@@ -46,7 +95,7 @@ function buildContextualSearchQuery(question, priorTurns = []) {
     /^¿?(e\b|mas\b|como\b|qual\b|quais\b|quanto\b|por que\b|porque\b|onde\b|quando\b|isso\b|ele\b|ela\b|eles\b|deles\b|disso\b|nesse\b|nessa\b|what about|how about|and\b|why\b|y\b|pero\b|cómo\b|cuál\b|cuáles\b|qué\b|por qué\b|dónde\b|cuándo\b|quién\b)/i.test(cleanQuestion);
 
   if (!needsContext) {
-    return cleanQuestion.slice(0, 380);
+    return applyFocusModeToQuery(cleanQuestion, focusMode);
   }
 
   const anchor = lastQuestion && lastQuestion !== firstQuestion && !lastQuestion.includes(firstQuestion)
@@ -54,7 +103,7 @@ function buildContextualSearchQuery(question, priorTurns = []) {
     : firstQuestion;
 
   const combined = `${anchor} — ${cleanQuestion}`.replace(/\s+/g, ' ').trim();
-  return combined.slice(0, 380);
+  return applyFocusModeToQuery(combined, focusMode);
 }
 
 /**
@@ -376,6 +425,9 @@ async function searchKeylessWeb(query, { httpRequest = request, timeoutMs = 8000
  */
 async function searchBrave(query, options = {}) {
   const env = options.env || process.env;
+  const effectiveQuery = options.focusMode
+    ? applyFocusModeToQuery(query, options.focusMode)
+    : String(query || '').trim();
   const searchProvider = String(options.provider || env.SEARCH_PROVIDER || '').trim().toLowerCase();
   const searxngUrl = String(options.searxngUrl || env.SEARXNG_URL || DEFAULT_SEARXNG_URL).trim();
   const apiKey = options.apiKey ?? env.BRAVE_SEARCH_API_KEY ?? env.BRAVE_API_KEY ?? '';
@@ -392,7 +444,7 @@ async function searchBrave(query, options = {}) {
 
   // 1. Se options.provider === 'searxng' ou se não há chave Brave real e SEARCH_PROVIDER=searxng (e apiKey !== 'keyless')
   if (options.provider === 'searxng' || (!hasValidBraveKey && apiKey !== 'keyless' && (searchProvider === 'searxng' || apiKey === 'searxng'))) {
-    const searxRes = await searchSearxng(query, {
+    const searxRes = await searchSearxng(effectiveQuery, {
       baseUrl: searxngUrl,
       httpRequest,
       timeoutMs,
@@ -402,7 +454,7 @@ async function searchBrave(query, options = {}) {
       return searxRes;
     }
     // Se o container SearXNG local estiver desligado, faz fallback transparente para busca web direta
-    return searchKeylessWeb(query, { httpRequest, timeoutMs, count });
+    return searchKeylessWeb(effectiveQuery, { httpRequest, timeoutMs, count });
   }
 
   // 2. Se não há chave Brave válida, tenta SearXNG local primeiro e depois DuckDuckGo HTML
@@ -415,7 +467,7 @@ async function searchBrave(query, options = {}) {
       };
     }
     if (apiKey !== 'keyless' && env.SEARXNG_URL) {
-      const searxRes = await searchSearxng(query, {
+      const searxRes = await searchSearxng(effectiveQuery, {
         baseUrl: searxngUrl,
         httpRequest,
         timeoutMs,
@@ -423,12 +475,12 @@ async function searchBrave(query, options = {}) {
       });
       if (searxRes.results.length > 0) return searxRes;
     }
-    return searchKeylessWeb(query, { httpRequest, timeoutMs, count });
+    return searchKeylessWeb(effectiveQuery, { httpRequest, timeoutMs, count });
   }
 
   // 3. Brave Search API Oficial
   const url = new URL(BRAVE_ENDPOINT);
-  url.searchParams.set('q', String(query || '').trim());
+  url.searchParams.set('q', effectiveQuery);
   url.searchParams.set('count', String(Math.min(Math.max(count, 1), 20)));
   url.searchParams.set('text_decorations', 'false');
 
@@ -477,6 +529,8 @@ async function searchBrave(query, options = {}) {
 
 module.exports = {
   MAX_RESULTS,
+  FOCUS_MODES,
+  applyFocusModeToQuery,
   buildContextualSearchQuery,
   searchBrave,
   searchSearxng,

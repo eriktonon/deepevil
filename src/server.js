@@ -46,6 +46,59 @@ function isLoopbackAddress(remoteAddress = '') {
 }
 
 /**
+ * Agrupador de quadros SSE (Frame Batching ~42ms / ~24fps):
+ * Emite o 1º token imediatamente (0ms de atraso de TTFT) e agrupa deltas intermediários
+ * em janelas de `intervalMs`, reduzindo re-renderizações DOM/Markdown em ~75%.
+ */
+function createFrameBatcher(emitFn, intervalMs = 42) {
+  let lastRun = 0;
+  let timer = null;
+  let pendingArg = null;
+  let hasPending = false;
+
+  const invoke = (arg) => {
+    lastRun = Date.now();
+    hasPending = false;
+    pendingArg = null;
+    emitFn(arg);
+  };
+
+  return {
+    push(arg) {
+      if (intervalMs <= 0) {
+        invoke(arg);
+        return;
+      }
+      const now = Date.now();
+      const elapsed = now - lastRun;
+      if (elapsed >= intervalMs && !timer) {
+        invoke(arg);
+        return;
+      }
+      pendingArg = arg;
+      hasPending = true;
+      if (!timer) {
+        timer = setTimeout(() => {
+          timer = null;
+          if (hasPending) {
+            invoke(pendingArg);
+          }
+        }, Math.max(8, intervalMs - elapsed));
+      }
+    },
+    flush() {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      if (hasPending) {
+        invoke(pendingArg);
+      }
+    }
+  };
+}
+
+/**
  * Cria a instância Express configurada com todas as rotas htmx, SSE, Ollama e Qdrant Vector DB.
  * Aceita dependências injetáveis para testes determinísticos de integração.
  */
@@ -417,11 +470,12 @@ function createApp(options = {}) {
     res.send(doc);
   });
 
-  // Submeter pergunta (inicial ou follow-up mantendo contexto da conversa anterior e LLM escolhida)
+  // Submeter pergunta (inicial ou follow-up mantendo contexto da conversa anterior, Focus Mode e LLM escolhida)
   app.post('/ask', async (req, res) => {
     const rawQuestion = String(req.body?.question || '').trim();
     const rawConvId = String(req.body?.conversationId || '').trim();
     const selectedModel = String(req.body?.model || '').trim();
+    const focusMode = String(req.body?.focusMode || 'web').trim().toLowerCase() || 'web';
 
     if (!rawQuestion) {
       res.status(400).type('html').send(
@@ -437,7 +491,7 @@ function createApp(options = {}) {
     }
 
     const priorTurns = db.getPriorCompletedTurns(conversation.id);
-    const searchQuery = buildContextualSearchQuery(rawQuestion, priorTurns);
+    const searchQuery = buildContextualSearchQuery(rawQuestion, priorTurns, focusMode);
     const llmConfig = resolveLlmConfig(env, selectedModel);
 
     const turn = db.createTurn({
@@ -445,7 +499,8 @@ function createApp(options = {}) {
       question: rawQuestion,
       searchQuery,
       provider: llmConfig.provider,
-      model: llmConfig.model
+      model: llmConfig.model,
+      focusMode
     });
 
     const models = await listModelsFn({ env }).catch(() => []);
@@ -454,7 +509,8 @@ function createApp(options = {}) {
     const sidebarOob = renderSidebarConversations(conversations, conversation.id, true);
     const composerOob = renderComposerForm(conversation, true, {
       models,
-      activeModel: llmConfig.model
+      activeModel: llmConfig.model,
+      activeFocus: focusMode
     });
     const removeHeroOob = '<div id="empty-hero" hx-swap-oob="delete"></div>';
 
@@ -468,10 +524,51 @@ function createApp(options = {}) {
   // múltiplos clientes SSE se conectem ao mesmo turnId simultaneamente
   const activeTurnStreams = new Map();
 
+  // Interromper imediatamente um turno em execução (Stop Generation)
+  app.post('/turns/:turnId/stop', (req, res) => {
+    const turnId = Number(req.params.turnId);
+    const active = activeTurnStreams.get(turnId);
+    if (active && active.abortController) {
+      active.abortController.abort();
+      res.json({ ok: true, stopped: true, turnId });
+      return;
+    }
+    res.json({ ok: true, stopped: false, turnId });
+  });
+
+  // Regerar / Trocar Modelo reutilizando as fontes já extraídas no SQLite (0ms de busca web)
+  app.post('/turns/:turnId/rewrite', (req, res) => {
+    const turnId = Number(req.params.turnId);
+    const turn = db.getTurn(turnId);
+    if (!turn) {
+      res.status(404).json({ ok: false, error: 'Turno não encontrado.' });
+      return;
+    }
+
+    const active = activeTurnStreams.get(turnId);
+    if (active && active.abortController) {
+      active.abortController.abort();
+    }
+
+    const requestedModel = String(req.body?.model || turn.model || '').trim();
+    const llmConfig = resolveLlmConfig(env, requestedModel);
+    const updated = typeof db.resetTurnForRewrite === 'function'
+      ? db.resetTurnForRewrite(turnId, { provider: llmConfig.provider, model: llmConfig.model })
+      : turn;
+
+    res.json({
+      ok: true,
+      turnId: updated.id,
+      provider: updated.provider,
+      model: updated.model,
+      sourcesCount: Array.isArray(updated.sources) ? updated.sources.length : 0
+    });
+  });
+
   // Endpoint SSE de Streaming para execução do pipeline:
-  // 1) Brave Search (top 6 via undici)
-  // 2) Extração @mozilla/readability + jsdom (ignorando falhas)
-  // 3) Streaming LLM (Claude ou GPT) com citações [1][2] e contexto de follow-up
+  // 1) Busca Multi-Motor (SearXNG / Brave / Keyless + Focus Mode)
+  // 2) Extração @mozilla/readability + jsdom com Early-Cutoff + Snippet Fallback (ou reuso instantâneo no Rewrite)
+  // 3) Streaming LLM com Frame Batching (~42ms), citações [1][2] + Hover Cards e suporte a Stop Generation
   app.get('/stream/:turnId', async (req, res) => {
     const turnId = Number(req.params.turnId);
     const turn = db.getTurn(turnId);
@@ -503,6 +600,7 @@ function createApp(options = {}) {
         res,
         'status',
         renderPipelineStatusBadge(turn.status, {
+          turnId: turn.id,
           searchQuery: turn.search_query,
           attemptedCount: turn.attempted_urls_count,
           extractedCount: turn.extracted_sources_count,
@@ -512,7 +610,11 @@ function createApp(options = {}) {
           errorMessage: turn.error_message
         })
       );
-      writeSseToRes(res, 'sources', renderTurnSourcesFootnotes(turn.id, turn.sources || [], { status: turn.status, question: turn.question }));
+      writeSseToRes(res, 'sources', renderTurnSourcesFootnotes(turn.id, turn.sources || [], {
+        status: turn.status,
+        question: turn.question,
+        answerMarkdown: turn.answer_markdown
+      }));
       writeSseToRes(res, 'answer', renderAnswerMarkdownWithFootnotes(turn.answer_markdown, turn.id, turn.sources || []));
       writeSseToRes(res, 'done', 'closed');
       res.end();
@@ -532,8 +634,10 @@ function createApp(options = {}) {
       return;
     }
 
+    const abortController = new AbortController();
     const streamState = {
       clients: new Set([res]),
+      abortController,
       lastStatus: null,
       lastSources: null,
       lastAnswer: null
@@ -565,40 +669,78 @@ function createApp(options = {}) {
     };
 
     const startedAt = Date.now();
+    const throttleMs = Number(env.SSE_THROTTLE_MS ?? 40);
 
     try {
-      // ETAPA 1: Consulta Brave Search API (top 6 resultados via undici)
-      db.updateTurnStatus(turn.id, 'searching', { searchQuery: turn.search_query });
-      broadcastSse(
-        'status',
-        renderPipelineStatusBadge('searching', { searchQuery: turn.search_query })
-      );
+      let validSources = Array.isArray(turn.sources) ? turn.sources : [];
+      let attemptedUrlsCount = Number(turn.attempted_urls_count || validSources.length);
+      const isRewriteWithCachedSources = turn.status === 'streaming' && validSources.length > 0;
 
-      const searchOutcome = await searchFn(turn.search_query, { env });
-      const searchResults = Array.isArray(searchOutcome?.results)
-        ? searchOutcome.results.slice(0, 6)
-        : [];
+      if (!isRewriteWithCachedSources) {
+        // ETAPA 1: Consulta Busca Web (e em paralelo Qdrant caso focus_mode === 'hybrid')
+        db.updateTurnStatus(turn.id, 'searching', { searchQuery: turn.search_query });
+        broadcastSse(
+          'status',
+          renderPipelineStatusBadge('searching', {
+            turnId: turn.id,
+            searchQuery: turn.search_query
+          })
+        );
 
-      // ETAPA 2: Extração legível com undici + @mozilla/readability + jsdom
-      // Páginas que falharem são ignoradas; apenas páginas extraídas com sucesso são numeradas [1]..[K]
-      db.updateTurnStatus(turn.id, 'extracting', {
-        attemptedUrlsCount: searchResults.length
-      });
-      broadcastSse(
-        'status',
-        renderPipelineStatusBadge('extracting', {
-          attemptedCount: searchResults.length
-        })
-      );
+        const hybridPromise =
+          turn.focus_mode === 'hybrid' && typeof qdrant.searchHybridSources === 'function'
+            ? qdrant.searchHybridSources(turn.question, 2).catch(() => [])
+            : Promise.resolve([]);
 
-      const extraction = await extractFn(searchResults, { env });
-      const validSources = Array.isArray(extraction?.sources) ? extraction.sources : [];
+        const [searchOutcome, hybridLocalSources] = await Promise.all([
+          searchFn(turn.search_query, { env, focusMode: turn.focus_mode || 'web' }),
+          hybridPromise
+        ]);
 
-      db.saveTurnSources(turn.id, validSources);
-      db.updateTurnStatus(turn.id, 'streaming', {
-        attemptedUrlsCount: extraction.attemptedCount ?? searchResults.length,
-        extractedSourcesCount: validSources.length
-      });
+        const searchResults = Array.isArray(searchOutcome?.results)
+          ? searchOutcome.results.slice(0, 6)
+          : [];
+
+        // ETAPA 2: Extração legível com Early-Cutoff + SERP Snippet Fallback
+        db.updateTurnStatus(turn.id, 'extracting', {
+          attemptedUrlsCount: searchResults.length
+        });
+        broadcastSse(
+          'status',
+          renderPipelineStatusBadge('extracting', {
+            turnId: turn.id,
+            attemptedCount: searchResults.length
+          })
+        );
+
+        const extraction = await extractFn(searchResults, {
+          env,
+          signal: abortController.signal
+        });
+        const webSources = Array.isArray(extraction?.sources) ? extraction.sources : [];
+        attemptedUrlsCount = extraction.attemptedCount ?? searchResults.length;
+
+        const combinedSources = [...webSources];
+        if (Array.isArray(hybridLocalSources) && hybridLocalSources.length > 0) {
+          for (const hs of hybridLocalSources) {
+            if (combinedSources.length >= 6) break;
+            if (!combinedSources.some((s) => s.url === hs.url)) {
+              combinedSources.push(hs);
+            }
+          }
+        }
+
+        validSources = combinedSources.map((src, idx) => ({
+          ...src,
+          citationIndex: idx + 1
+        }));
+
+        db.saveTurnSources(turn.id, validSources);
+        db.updateTurnStatus(turn.id, 'streaming', {
+          attemptedUrlsCount,
+          extractedSourcesCount: validSources.length
+        });
+      }
 
       // Envia imediatamente a lista completa de fontes obtidas com sucesso para o rodapé da resposta
       broadcastSse(
@@ -610,14 +752,23 @@ function createApp(options = {}) {
       broadcastSse(
         'status',
         renderPipelineStatusBadge('streaming', {
+          turnId: turn.id,
           provider: llmConfig.provider,
           model: llmConfig.model,
           extractedCount: validSources.length
         })
       );
 
-      // ETAPA 3: Contexto de follow-up + Streaming do modelo LLM escolhido com citações [1][2]
+      // ETAPA 3: Contexto de follow-up + Streaming LLM com Frame Batching (~40ms)
       const priorTurns = db.getPriorCompletedTurns(turn.conversation_id, turn.id);
+      const answerBatcher = createFrameBatcher((sanitizedText) => {
+        const renderedHtml = renderAnswerMarkdownWithFootnotes(
+          sanitizedText,
+          turn.id,
+          validSources
+        );
+        broadcastSse('answer', renderedHtml);
+      }, throttleMs);
 
       const llmResult = await streamAnswerFn({
         question: turn.question,
@@ -625,22 +776,24 @@ function createApp(options = {}) {
         priorTurns,
         env,
         selectedModel: turn.model || llmConfig.model,
+        signal: abortController.signal,
         onDelta: (_delta, sanitizedAccumulated) => {
-          const renderedHtml = renderAnswerMarkdownWithFootnotes(
-            sanitizedAccumulated,
-            turn.id,
-            validSources
-          );
-          broadcastSse('answer', renderedHtml);
+          answerBatcher.push(sanitizedAccumulated);
         }
       });
 
+      answerBatcher.flush();
+
+      const finalMarkdown = llmResult.aborted
+        ? `${String(llmResult.text || '').trim()}\n\n*(Geração interrompida pelo operador)*`.trim()
+        : llmResult.text;
+
       const durationMs = Date.now() - startedAt;
       const completedTurn = db.completeTurn(turn.id, {
-        answerMarkdown: llmResult.text,
+        answerMarkdown: finalMarkdown,
         provider: llmResult.provider || llmConfig.provider,
         model: llmResult.model || llmConfig.model,
-        attemptedUrlsCount: extraction.attemptedCount ?? searchResults.length,
+        attemptedUrlsCount,
         extractedSourcesCount: validSources.length,
         durationMs
       });
@@ -662,11 +815,16 @@ function createApp(options = {}) {
       );
       broadcastSse(
         'sources',
-        renderTurnSourcesFootnotes(turn.id, validSources, { status: 'completed', question: turn.question })
+        renderTurnSourcesFootnotes(turn.id, validSources, {
+          status: 'completed',
+          question: turn.question,
+          answerMarkdown: completedTurn.answer_markdown
+        })
       );
       broadcastSse(
         'status',
         renderPipelineStatusBadge('completed', {
+          turnId: turn.id,
           attemptedCount: completedTurn.attempted_urls_count,
           extractedCount: completedTurn.extracted_sources_count,
           provider: completedTurn.provider,
@@ -722,6 +880,7 @@ if (require.main === module) {
 
 module.exports = {
   createApp,
+  createFrameBatcher,
   getEnvStatus,
   isLoopbackAddress
 };

@@ -210,7 +210,60 @@
       return;
     }
 
-    // 7. Destaque visual suave ao clicar numa citação [1] de rodapé ou num card da faixa superior de fontes
+    // 7. Botão "■ Parar" (Stop Generation em tempo real)
+    const stopBtn = event.target.closest('[data-stop-turn]');
+    if (stopBtn) {
+      const turnId = stopBtn.getAttribute('data-stop-turn');
+      if (turnId && !stopBtn.disabled) {
+        stopBtn.disabled = true;
+        stopBtn.textContent = 'Parando…';
+        fetch(`/turns/${encodeURIComponent(turnId)}/stop`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' }
+        }).catch(() => {});
+      }
+      return;
+    }
+
+    // 8. Botão "↻ Regerar" (Trocar modelo reutilizando as fontes já extraídas no SQLite)
+    const rewriteBtn = event.target.closest('[data-rewrite-turn]');
+    if (rewriteBtn) {
+      const turnId = rewriteBtn.getAttribute('data-rewrite-turn');
+      if (!turnId || rewriteBtn.disabled) return;
+      const modelSelect = document.getElementById('model-select');
+      const selectedModel = modelSelect ? modelSelect.value : '';
+      const labelEl = rewriteBtn.querySelector('.rewrite-btn-label');
+
+      rewriteBtn.disabled = true;
+      if (labelEl) labelEl.textContent = 'Regerando…';
+
+      if (window.__deepevilOriginalAnswers) {
+        window.__deepevilOriginalAnswers.delete(turnId);
+      }
+
+      fetch(`/turns/${encodeURIComponent(turnId)}/rewrite`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ model: selectedModel })
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data && data.ok) {
+            activeStreams.delete(String(turnId));
+            connectTurnStream(String(turnId), false);
+          } else {
+            rewriteBtn.disabled = false;
+            if (labelEl) labelEl.textContent = '↻ Regerar';
+          }
+        })
+        .catch(() => {
+          rewriteBtn.disabled = false;
+          if (labelEl) labelEl.textContent = '↻ Regerar';
+        });
+      return;
+    }
+
+    // 9. Destaque visual suave ao clicar numa citação [1] de rodapé ou num card da faixa superior de fontes
     const citationLink = event.target.closest('.citation-link, .top-source-card');
     if (citationLink) {
       const sourceId = citationLink.getAttribute('data-source-id');
@@ -241,64 +294,84 @@
     window.scrollTo({ top: targetY, behavior: 'smooth' });
   }
 
+  function connectTurnStream(turnId, shouldScroll = true) {
+    if (!turnId || activeStreams.has(turnId)) return;
+    activeStreams.add(turnId);
+
+    if (shouldScroll) {
+      scrollTurnToTop(turnId);
+      setTimeout(() => scrollTurnToTop(turnId), 80);
+      setTimeout(() => scrollTurnToTop(turnId), 260);
+    }
+
+    const statusSlot = document.getElementById(`turn-status-${turnId}`);
+    const answerSlot = document.getElementById(`turn-answer-${turnId}`);
+    const sourcesSlot = document.getElementById(`turn-sources-${turnId}`);
+    let scrolledOnContent = !shouldScroll;
+
+    const es = new EventSource(`/stream/${encodeURIComponent(turnId)}`);
+
+    es.addEventListener('status', (e) => {
+      if (statusSlot && e.data) statusSlot.innerHTML = e.data;
+    });
+
+    es.addEventListener('sources', (e) => {
+      if (sourcesSlot && e.data) {
+        sourcesSlot.innerHTML = e.data;
+        if (!scrolledOnContent) {
+          scrolledOnContent = true;
+          scrollTurnToTop(turnId);
+        }
+      }
+    });
+
+    es.addEventListener('answer', (e) => {
+      if (answerSlot && e.data) {
+        answerSlot.innerHTML = e.data;
+        if (!scrolledOnContent) {
+          scrolledOnContent = true;
+          scrollTurnToTop(turnId);
+        }
+      }
+    });
+
+    es.addEventListener('done', () => {
+      const turnCard = document.getElementById(`turn-${turnId}`);
+      if (turnCard) turnCard.classList.remove('turn-card-live');
+      es.close();
+    });
+
+    es.onerror = () => {
+      es.close();
+    };
+  }
+
   function ensureLiveStreamsConnected(root) {
     const containers = (root || document).querySelectorAll('[data-stream-turn]');
     containers.forEach((container) => {
       const turnId = container.getAttribute('data-stream-turn');
-      if (!turnId || activeStreams.has(turnId)) return;
-
-      activeStreams.add(turnId);
-
-      // Rola imediatamente até o novo turno e reforça após os swaps OOB do HTMX
-      scrollTurnToTop(turnId);
-      setTimeout(() => scrollTurnToTop(turnId), 80);
-      setTimeout(() => scrollTurnToTop(turnId), 260);
-
-      const statusSlot = document.getElementById(`turn-status-${turnId}`);
-      const answerSlot = document.getElementById(`turn-answer-${turnId}`);
-      const sourcesSlot = document.getElementById(`turn-sources-${turnId}`);
-      let scrolledOnContent = false;
-
-      const es = new EventSource(`/stream/${encodeURIComponent(turnId)}`);
-
-      es.addEventListener('status', (e) => {
-        if (statusSlot && e.data) statusSlot.innerHTML = e.data;
-      });
-
-      es.addEventListener('sources', (e) => {
-        if (sourcesSlot && e.data) {
-          sourcesSlot.innerHTML = e.data;
-          if (!scrolledOnContent) {
-            scrolledOnContent = true;
-            scrollTurnToTop(turnId);
-          }
-        }
-      });
-
-      es.addEventListener('answer', (e) => {
-        if (answerSlot && e.data) {
-          answerSlot.innerHTML = e.data;
-          if (!scrolledOnContent) {
-            scrolledOnContent = true;
-            scrollTurnToTop(turnId);
-          }
-        }
-      });
-
-      es.addEventListener('done', () => {
-        const turnCard = document.getElementById(`turn-${turnId}`);
-        if (turnCard) turnCard.classList.remove('turn-card-live');
-        es.close();
-      });
-
-      es.onerror = () => {
-        es.close();
-      };
+      connectTurnStream(turnId, true);
     });
   }
 
-  // 6. Sincronização do seletor de LLM (Ollama) e atualização do badge superior
+  // 6. Sincronização do seletor de LLM (Ollama), Focus Mode e atualização do badge superior
   function syncModelSelector(root) {
+    const focusEl = (root || document).querySelector('#focus-select');
+    if (focusEl) {
+      const savedFocus = window.localStorage ? window.localStorage.getItem('deepevil_selected_focus') : '';
+      if (savedFocus && Array.from(focusEl.options).some((opt) => opt.value === savedFocus)) {
+        focusEl.value = savedFocus;
+      }
+      if (!focusEl.dataset.focusBound) {
+        focusEl.dataset.focusBound = '1';
+        focusEl.addEventListener('change', () => {
+          if (window.localStorage) {
+            window.localStorage.setItem('deepevil_selected_focus', focusEl.value);
+          }
+        });
+      }
+    }
+
     const selectEl = (root || document).querySelector('#model-select');
     if (!selectEl) return;
 

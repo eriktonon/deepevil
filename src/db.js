@@ -77,7 +77,26 @@ function createDatabase(customDbPath) {
     CREATE INDEX IF NOT EXISTS idx_sources_turn_id ON sources(turn_id);
   `);
 
+  // Migração segura para focus_mode em bancos SQLite já existentes
+  try {
+    db.exec(`ALTER TABLE turns ADD COLUMN focus_mode TEXT NOT NULL DEFAULT 'web'`);
+  } catch (_) {
+    // Coluna focus_mode já existe
+  }
+
   const stmts = {
+    resetTurnForRewrite: db.prepare(`
+      UPDATE turns
+      SET status = 'streaming',
+          answer_markdown = '',
+          provider = @provider,
+          model = @model,
+          error_message = NULL
+      WHERE id = @id
+    `),
+    clearTurnTranslations: db.prepare(`
+      DELETE FROM turn_translations WHERE turn_id = ?
+    `),
     getTurnTranslation: db.prepare(`
       SELECT turn_id, target_lang, model, translated_markdown, created_at
       FROM turn_translations
@@ -122,9 +141,9 @@ function createDatabase(customDbPath) {
     `),
     insertTurn: db.prepare(`
       INSERT INTO turns (
-        conversation_id, question, search_query, status, provider, model
+        conversation_id, question, search_query, status, provider, model, focus_mode
       ) VALUES (
-        @conversationId, @question, @searchQuery, 'pending', @provider, @model
+        @conversationId, @question, @searchQuery, 'pending', @provider, @model, @focusMode
       )
     `),
     getTurn: db.prepare(`
@@ -226,17 +245,29 @@ function createDatabase(customDbPath) {
       return stmts.deleteConversation.run(Number(id)).changes > 0;
     },
 
-    createTurn({ conversationId, question, searchQuery = '', provider = '', model = '' }) {
+    createTurn({ conversationId, question, searchQuery = '', provider = '', model = '', focusMode = 'web' }) {
       const convId = Number(conversationId);
       const info = stmts.insertTurn.run({
         conversationId: convId,
         question: String(question).trim(),
         searchQuery: String(searchQuery || question).trim(),
         provider,
-        model
+        model,
+        focusMode: String(focusMode || 'web').trim().toLowerCase()
       });
       stmts.touchConversation.run({ id: convId });
       return stmts.getTurn.get(info.lastInsertRowid);
+    },
+
+    resetTurnForRewrite(turnId, { provider = '', model = '' } = {}) {
+      const id = Number(turnId);
+      stmts.resetTurnForRewrite.run({
+        id,
+        provider: String(provider || ''),
+        model: String(model || '')
+      });
+      stmts.clearTurnTranslations.run(id);
+      return this.getTurn(id);
     },
 
     getTurn(turnId) {
