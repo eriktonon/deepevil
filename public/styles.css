@@ -811,10 +811,11 @@ body {
 
 /* Hover Preview Card estilo Perplexity nas citações inline */
 .citation-popover {
+  display: none;
   position: absolute;
   bottom: calc(100% + 8px);
   left: 50%;
-  transform: translateX(-50%) translateY(4px);
+  transform: translateX(-50%);
   width: 310px;
   max-width: 82vw;
   padding: 10px 12px;
@@ -829,20 +830,27 @@ body {
   text-align: left;
   white-space: normal;
   pointer-events: none;
-  opacity: 0;
-  visibility: hidden;
+  user-select: none;
+  -webkit-user-select: none;
   z-index: 60;
-  display: flex;
   flex-direction: column;
   gap: 5px;
-  transition: opacity 150ms ease, transform 150ms ease, visibility 150ms ease;
 }
 
 .footnote-ref:hover .citation-popover,
 .footnote-ref:focus-within .citation-popover {
-  opacity: 1;
-  visibility: visible;
-  transform: translateX(-50%) translateY(0);
+  display: flex !important;
+}
+
+.list-item-body {
+  margin-top: 4px;
+  color: var(--text-primary);
+  line-height: 1.65;
+}
+
+.math-inline {
+  color: var(--g-yellow);
+  font-style: italic;
 }
 
 .citation-popover-head {

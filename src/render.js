@@ -62,19 +62,20 @@ function renderTopSourcesStrip(turnId, sources = []) {
     .map((src, i) => {
       const idx = src.citationIndex ?? src.citation_index ?? i + 1;
       const shortHost = formatShortDomain(src.domain);
+      const cleanTitle = String(src.title || '').replace(/\$([^$\n]{1,80})\$/g, (_, m) => formatLatexMathInline(m));
       const colorCycle = ['g-top-blue', 'g-top-red', 'g-top-yellow', 'g-top-green'][(idx - 1) % 4];
       return `
         <a
           href="#source-${turnId}-${idx}"
           class="top-source-card ${colorCycle}"
           data-source-id="source-${turnId}-${idx}"
-          title="${escapeHtml(`[${idx}] ${src.title} (${src.domain})`)}"
+          title="${escapeHtml(`[${idx}] ${cleanTitle} (${src.domain})`)}"
         >
           <span class="top-source-card-head">
             <span class="top-source-badge tabular-nums">[${idx}]</span>
             <span class="top-source-domain">${escapeHtml(shortHost)}</span>
           </span>
-          <span class="top-source-title">${escapeHtml(src.title)}</span>
+          <span class="top-source-title">${escapeHtml(cleanTitle)}</span>
         </a>
       `;
     })
@@ -138,6 +139,35 @@ function renderAnswerMarkdownWithFootnotes(markdownText, turnId, sources = []) {
   return `${topStripHtml}\n<div class="answer-prose-content" id="answer-prose-${turnId}">${htmlSegments.join('\n')}</div>`;
 }
 
+function formatLatexMathInline(rawLatex) {
+  return String(rawLatex || '')
+    .replace(/\\(?:cM|mathcal\{M\})/g, '𝓜')
+    .replace(/\\(?:PP|mathbb\{P\})/g, 'ℙ')
+    .replace(/\\mathbb\{R\}/g, 'ℝ')
+    .replace(/\\mathbb\{Z\}/g, 'ℤ')
+    .replace(/\\mathbb\{N\}/g, 'ℕ')
+    .replace(/\\mathbb\{C\}/g, 'ℂ')
+    .replace(/\\to\b/g, '→')
+    .replace(/\\in\b/g, '∈')
+    .replace(/\\le(?:q)?\b/g, '≤')
+    .replace(/\\ge(?:q)?\b/g, '≥')
+    .replace(/\\neq\b/g, '≠')
+    .replace(/\\approx\b/g, '≈')
+    .replace(/\\times\b/g, '×')
+    .replace(/\\infty\b/g, '∞')
+    .replace(/\\alpha\b/g, 'α')
+    .replace(/\\beta\b/g, 'β')
+    .replace(/\\gamma\b/g, 'γ')
+    .replace(/\\delta\b/g, 'δ')
+    .replace(/\\lambda\b/g, 'λ')
+    .replace(/\\sigma\b/g, 'σ')
+    .replace(/\\omega\b/g, 'ω')
+    .replace(/\\\{/g, '{')
+    .replace(/\\\}/g, '}')
+    .replace(/\^\{([^}]+)\}/g, '^($1)')
+    .replace(/_\{([^}]+)\}/g, '_($1)');
+}
+
 function renderMarkdownProse(prose, turnId, validSourcesMap, seenFirstRef) {
   // Limpa rótulo literal "Lead Executivo" / "Síntese Executiva" caso o modelo o repita e garante separação de cabeçalhos e listas
   const normalizedProse = String(prose || '')
@@ -145,7 +175,7 @@ function renderMarkdownProse(prose, turnId, validSourcesMap, seenFirstRef) {
     .replace(/^\s*(?:\*\*|#+\s*)?(?:Lead Executivo|S[íi]ntese Executiva|Resumen Ejecutivo|Executive Summary)(?:\*\*)?[:\s—-]*\n+/i, '')
     .replace(/^(#{1,4}\s+[^\n]+)$/gm, '\n\n$1\n\n')
     .replace(/([^\n])\n((?:[-*•]|\d+[.)])\s+)/g, (full, prevChar, listStart, offset, fullStr) => {
-      // Se a linha anterior não for item de lista, insere quebra dupla para abrir <ul>/<ol> limpo
+      // Se a linha anterior já faz parte de uma lista, mantém no mesmo bloco
       const before = fullStr.slice(0, offset + 1);
       const prevLine = before.split('\n').pop() || '';
       if (/^\s*(?:[-*•]|\d+[.)])\s+/.test(prevLine)) {
@@ -210,31 +240,55 @@ function renderMarkdownProse(prose, turnId, validSourcesMap, seenFirstRef) {
         const quoteLines = lines
           .map((l) => l.replace(/^>\s*/, ''))
           .map((l) => formatInlineMarkdownAndCitations(l, turnId, validSourcesMap, seenFirstRef))
-          .join('<br>');
+          .join(' <br>');
         return `<blockquote class="answer-blockquote">${quoteLines}</blockquote>`;
       }
 
-      const isUnorderedList = lines.length > 0 && lines.every((l) => /^[-*•]\s+/.test(l));
-      if (isUnorderedList) {
-        const items = lines
-          .map((l) => l.replace(/^[-*•]\s+/, ''))
-          .map((item) => `<li>${formatInlineMarkdownAndCitations(item, turnId, validSourcesMap, seenFirstRef)}</li>`)
+      // Suporte a listas não-ordenadas (- / * / •) inclusive com linhas de continuação indentadas
+      if (lines.length > 0 && /^[-*•]\s+/.test(lines[0])) {
+        const groupedItems = [];
+        for (const line of lines) {
+          if (/^[-*•]\s+/.test(line)) {
+            groupedItems.push([line.replace(/^[-*•]\s+/, '')]);
+          } else if (groupedItems.length > 0) {
+            groupedItems[groupedItems.length - 1].push(line);
+          }
+        }
+        const itemsHtml = groupedItems
+          .map((parts) => {
+            const formattedParts = parts.map((p) => formatInlineMarkdownAndCitations(p, turnId, validSourcesMap, seenFirstRef));
+            if (formattedParts.length === 1) return `<li>${formattedParts[0]}</li>`;
+            return `<li>${formattedParts[0]} <div class="list-item-body">${formattedParts.slice(1).join(' <br>')}</div></li>`;
+          })
           .join('');
-        return `<ul class="answer-list">${items}</ul>`;
+        return `<ul class="answer-list">${itemsHtml}</ul>`;
       }
 
-      const isOrderedList = lines.length > 0 && lines.every((l) => /^\d+[.)]\s+/.test(l));
-      if (isOrderedList) {
-        const items = lines
-          .map((l) => l.replace(/^\d+[.)]\s+/, ''))
-          .map((item) => `<li>${formatInlineMarkdownAndCitations(item, turnId, validSourcesMap, seenFirstRef)}</li>`)
+      // Suporte a listas numeradas (1. / 2.) inclusive quando o título está na 1ª linha e a explicação na linha seguinte
+      if (lines.length > 0 && /^\d+[.)]\s+/.test(lines[0])) {
+        const groupedOrdered = [];
+        for (const line of lines) {
+          const m = line.match(/^(\d+)[.)]\s+([\s\S]*)$/);
+          if (m) {
+            groupedOrdered.push({ num: Number(m[1]), parts: [m[2]] });
+          } else if (groupedOrdered.length > 0) {
+            groupedOrdered[groupedOrdered.length - 1].parts.push(line);
+          }
+        }
+        const itemsHtml = groupedOrdered
+          .map(({ num, parts }) => {
+            const formattedParts = parts.map((p) => formatInlineMarkdownAndCitations(p, turnId, validSourcesMap, seenFirstRef));
+            const valAttr = Number.isInteger(num) && num > 0 ? ` value="${num}"` : '';
+            if (formattedParts.length === 1) return `<li${valAttr}>${formattedParts[0]}</li>`;
+            return `<li${valAttr}>${formattedParts[0]} <div class="list-item-body">${formattedParts.slice(1).join(' <br>')}</div></li>`;
+          })
           .join('');
-        return `<ol class="answer-list answer-list-ordered">${items}</ol>`;
+        return `<ol class="answer-list answer-list-ordered">${itemsHtml}</ol>`;
       }
 
       const joinedLines = lines
         .map((line) => formatInlineMarkdownAndCitations(line, turnId, validSourcesMap, seenFirstRef))
-        .join('<br>');
+        .join(' <br>');
       return `<p class="answer-paragraph">${joinedLines}</p>`;
     })
     .join('\n');
@@ -243,16 +297,21 @@ function renderMarkdownProse(prose, turnId, validSourcesMap, seenFirstRef) {
 function formatInlineMarkdownAndCitations(text, turnId, validSourcesMap, seenFirstRef) {
   let escaped = escapeHtml(text);
 
+  // Expressões matemáticas inline $...$ (ex.: $\cM_{0,2n}^{GIT}$ -> 𝓜_(0,2n)^(GIT))
+  escaped = escaped.replace(/\$([^$\n]{1,80})\$/g, (_, mathBody) => {
+    return `<code class="inline-code math-inline">${formatLatexMathInline(mathBody)}</code>`;
+  });
+
   // Inline code `code`
   escaped = escaped.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>');
 
-  // Bold **text**
-  escaped = escaped.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  // Bold **text** (suporta itálico aninhado dentro do negrito)
+  escaped = escaped.replace(/\*\*([\s\S]+?)\*\*/g, '<strong>$1</strong>');
 
   // Italic *text*
-  escaped = escaped.replace(/(^|[^*])\*([^*]+)\*(?!\*)/g, '$1<em>$2</em>');
+  escaped = escaped.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>');
 
-  // Citações [1][2] -> Links de rodapé com pílula de domínio confiável + Hover Popover Card estilo Perplexity
+  // Citações [1][2] -> Links de rodapé com pílula de domínio confiável + Hover Popover Card oculto por padrão (style="display:none")
   escaped = escaped.replace(/\[(\d+)\]/g, (full, numStr) => {
     const idx = Number(numStr);
     const src = validSourcesMap.get(idx);
@@ -265,11 +324,12 @@ function formatInlineMarkdownAndCitations(text, turnId, validSourcesMap, seenFir
     seenFirstRef.add(idx);
 
     const shortHost = formatShortDomain(src.domain);
-    const tooltip = `[${idx}] ${src.title} — ${src.domain}`;
+    const cleanTitle = String(src.title || src.domain || '').replace(/\$([^$\n]{1,80})\$/g, (_, m) => formatLatexMathInline(m));
+    const tooltip = `[${idx}] ${cleanTitle} — ${src.domain}`;
     const hostBadge = shortHost ? `<span class="citation-host">${escapeHtml(shortHost)}</span>` : '';
     const snippetPreview = String(src.excerpt || '').replace(/\s+/g, ' ').trim().slice(0, 170);
     const hasMoreSnippet = String(src.excerpt || '').length > 170;
-    const popoverHtml = `<span class="citation-popover" role="tooltip"><span class="citation-popover-head"><span class="citation-popover-badge">[${idx}]</span><span class="citation-popover-domain">${escapeHtml(src.domain || '')}</span></span><span class="citation-popover-title">${escapeHtml(src.title || src.domain || '')}</span>${snippetPreview ? `<span class="citation-popover-excerpt">${escapeHtml(snippetPreview)}${hasMoreSnippet ? '…' : ''}</span>` : ''}</span>`;
+    const popoverHtml = `<span class="citation-popover" role="tooltip" aria-hidden="true" style="display:none"><span class="citation-popover-head"><span class="citation-popover-badge">[${idx}]</span><span class="citation-popover-domain">${escapeHtml(src.domain || '')}</span></span><span class="citation-popover-title">${escapeHtml(cleanTitle)}</span>${snippetPreview ? `<span class="citation-popover-excerpt">${escapeHtml(snippetPreview)}${hasMoreSnippet ? '…' : ''}</span>` : ''}</span>`;
     return `<sup class="footnote-ref"><a href="#source-${turnId}-${idx}"${refIdAttr} class="citation-link" data-source-id="source-${turnId}-${idx}" title="${escapeHtml(tooltip)}">[${idx}]${hostBadge}</a>${popoverHtml}</sup>`;
   });
 
@@ -958,12 +1018,12 @@ function renderFullPage({ conversations = [], activeConversation = null, envStat
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${escapeHtml(pageTitle)}</title>
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=deepevil-d-2">
-  <link rel="shortcut icon" href="/favicon.ico?v=deepevil-d-2">
-  <link rel="stylesheet" href="/styles.css">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=deepevil-d-5">
+  <link rel="shortcut icon" href="/favicon.ico?v=deepevil-d-5">
+  <link rel="stylesheet" href="/styles.css?v=deepevil-5">
   <script src="/vendor/htmx.min.js" defer></script>
   <script src="/vendor/sse.js" defer></script>
-  <script src="/app.js" defer></script>
+  <script src="/app.js?v=deepevil-5" defer></script>
 </head>
 <body>
   <div class="app-shell">

@@ -459,13 +459,92 @@ function rewriteQueryForTechnicalSearch(rawQuery) {
  * e descartar páginas de honeypot/decoy do Bing (ex.: "Santa Catarina", "Summer Place", "Joias").
  */
 function extractSubjectTokens(query = '') {
+  const cleaned = String(query || '')
+    // Converte URLs do GitHub em "<owner> <repo>" sem os termos "https", "github", "com"
+    .replace(/https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)/gi, ' $1 $2 ')
+    // Remove demais URLs brutas para que "https", "http", "com", "org" nunca virem tokens de busca
+    .replace(/https?:\/\/[^\s"'<>]+/gi, ' ')
+    // Remove sufixo .git mantendo o nome do projeto (ex.: ARTEX.git -> ARTEX)
+    .replace(/\.git\b/gi, ' ')
+    // Remove frases de template de follow-up
+    .replace(/\b(?:an[áa]lise\s+t[ée]cnica\s+direta|fontes\s+verificadas|funciona\s+na\s+pr[áa]tica|dentro\s+do\s+contexto\s+de|incidentes?\s+globais?\s+com|tem\s+fontes?\s+do\s+incidente)\b/gi, ' ');
+
   return [...new Set(
-    String(query || '')
+    cleaned
       .toLowerCase()
       .replace(/[^\p{L}\p{N}\s_-]/gu, ' ')
       .split(/\s+/)
-      .filter((w) => w.length >= 3 && !/^(how|what|why|when|where|who|which|the|and|for|with|from|into|como|que|qual|quais|para|com|dos|das|uma|uns|umas|por|sobre|entre|fazer|funciona|funcionam|arquitetura|sistema|sistemas|process|technical|overview|architecture|mechanism|internals|design|differences|comparison|synthesis|chemical|composition)$/.test(w))
+      .filter((w) => w.length >= 3 && !/^(how|what|why|when|where|who|which|the|and|for|with|from|into|http|https|www|com|org|net|git|github|como|que|qual|quais|para|com|dos|das|uma|uns|umas|por|sobre|entre|fazer|funciona|funcionam|prática|pratica|contexto|dentro|análise|analise|técnica|tecnica|direta|fontes|incidente|incidentes|globais|global|arquitetura|sistema|sistemas|process|technical|overview|architecture|mechanism|internals|design|differences|comparison|synthesis|chemical|composition)$/.test(w))
   )];
+}
+
+/**
+ * Detecta URLs explícitas (`https://...`) ou referências a repositórios (`github.com/owner/repo`, `NOME.git`)
+ * presentes na pergunta do usuário para buscá-las e extraí-las diretamente em 1º lugar.
+ */
+async function resolveDirectUrlAndGitCandidates(query, { httpRequest = request, timeoutMs = 4500 } = {}) {
+  const raw = String(query || '');
+  const candidates = [];
+  const seenUrls = new Set();
+
+  // 1. URLs diretas explícitas digitadas pelo usuário (ex.: https://github.com/BaaRai/ARTEX)
+  const urlMatches = raw.match(/https?:\/\/[^\s"'<>?]+/gi) || [];
+  for (const rawUrl of urlMatches) {
+    const cleanUrl = rawUrl.replace(/[.,;!?)]+$/, '').replace(/\.git$/i, '');
+    if (seenUrls.has(cleanUrl)) continue;
+    seenUrls.add(cleanUrl);
+
+    const ghMatch = cleanUrl.match(/^https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/i);
+    if (ghMatch) {
+      const owner = ghMatch[1];
+      const repo = ghMatch[2];
+      try {
+        const apiRes = await httpRequest(`https://api.github.com/repos/${owner}/${repo}`, {
+          method: 'GET',
+          headers: {
+            'User-Agent': 'DeepEvil/1.0 (Global Research Engine)',
+            'Accept': 'application/vnd.github+json'
+          },
+          headersTimeout: timeoutMs,
+          bodyTimeout: timeoutMs
+        });
+        if (apiRes.statusCode === 200) {
+          const meta = await apiRes.body.json();
+          candidates.push({
+            url: `https://github.com/${owner}/${repo}`,
+            title: `${meta.full_name || `${owner}/${repo}`} — ${meta.description || 'GitHub Repository'}`,
+            description: `${meta.description || ''} Language: ${meta.language || 'N/A'}. Stars: ${meta.stargazers_count || 0}. Forks: ${meta.forks_count || 0}. License: ${meta.license?.spdx_id || 'N/A'}. Repository URL: https://github.com/${owner}/${repo}`
+          });
+          continue;
+        } else if (apiRes.body && typeof apiRes.body.dump === 'function') {
+          await apiRes.body.dump().catch(() => {});
+        }
+      } catch (_) {}
+    }
+
+    candidates.push({
+      url: cleanUrl,
+      title: cleanUrl,
+      description: `Direct URL referenced in user query: ${cleanUrl}`
+    });
+  }
+
+  // 2. Menções a <projeto>.git (ex.: "ARTEX.git") quando não há URL explícita
+  const gitTokenMatches = [...raw.matchAll(/\b([A-Za-z0-9_-]{3,})\.git\b/gi)];
+  for (const m of gitTokenMatches) {
+    const repoKeyword = m[1];
+    try {
+      const ghHits = await searchGitHubGlobal(repoKeyword, { httpRequest, timeoutMs, count: 2 });
+      for (const hit of ghHits) {
+        if (!seenUrls.has(hit.url)) {
+          seenUrls.add(hit.url);
+          candidates.push(hit);
+        }
+      }
+    } catch (_) {}
+  }
+
+  return candidates;
 }
 
 /**
@@ -763,7 +842,7 @@ async function searchBingHtml(query, { httpRequest = request, timeoutMs = 8000, 
 
       // Anti-Honeypot Filter: descarta páginas aleatórias injetadas pelo anti-bot do Bing (ex.: "Santa Catarina", "Summer Place")
       if (isRealNetworkCall && subjectTokens.length > 0) {
-        const hay = `${title} ${description} ${resolvedUrl}`.toLowerCase();
+        const hay = `${title} ${description}`.toLowerCase();
         const matchesSubject = subjectTokens.some((tok) => hay.includes(tok));
         if (!matchesSubject) continue;
       }
@@ -936,31 +1015,49 @@ async function searchKeylessWeb(query, { httpRequest = request, timeoutMs = 8000
   }
 
   // 2. Federação Global de Pesquisa (Worldwide Research Federation) em paralelo:
-  // Resolve conceitos PT->EN via grafo da Wikipedia e consulta simultaneamente Wikipedia EN, OpenAlex, ArXiv, HN, GitHub e Bing Global
-  const enConcepts = await resolveWikipediaEnglishConcepts(query, { httpRequest, timeoutMs: 3000 });
+  // Inclui resolução direta de URLs/repositórios GitHub citados pelo usuário + Wikipedia EN, OpenAlex, ArXiv, HN, GitHub e Bing Global
+  const [directCandidates, enConcepts] = await Promise.all([
+    resolveDirectUrlAndGitCandidates(query, { httpRequest, timeoutMs: 4000 }),
+    resolveWikipediaEnglishConcepts(query, { httpRequest, timeoutMs: 3000 })
+  ]);
+  const cleanTokens = extractSubjectTokens(query);
   const federatedQuery = enConcepts.length > 0
-    ? `${enConcepts.slice(0, 2).join(' ')} ${effectiveQuery}`.trim()
-    : effectiveQuery;
+    ? `${enConcepts.slice(0, 2).join(' ')} ${cleanTokens.join(' ') || effectiveQuery}`.trim()
+    : (cleanTokens.join(' ') || effectiveQuery);
 
   const [wikiResults, openAlexResults, hnResults, ghResults, arxivResults, bingResults] = await Promise.all([
-    searchWikipediaFallback(query, { httpRequest, timeoutMs, count: 3, enConcepts }),
+    searchWikipediaFallback(federatedQuery, { httpRequest, timeoutMs, count: 3, enConcepts }),
     searchOpenAlexGlobal(federatedQuery, { httpRequest, timeoutMs: 4500, count: 3 }),
     searchHackerNewsGlobal(federatedQuery, { httpRequest, timeoutMs: 4000, count: 3 }),
-    searchGitHubGlobal(federatedQuery, { httpRequest, timeoutMs: 4000, count: 2 }),
+    searchGitHubGlobal(federatedQuery, { httpRequest, timeoutMs: 4000, count: 3 }),
     searchArxivGlobal(federatedQuery, { httpRequest, timeoutMs: 4500, count: 2 }),
-    searchBingHtml(query, { httpRequest, timeoutMs: 5000, count: 4, subjectContext: enConcepts.join(' ') })
+    searchBingHtml(federatedQuery, { httpRequest, timeoutMs: 5000, count: 4, subjectContext: enConcepts.join(' ') })
   ]);
 
   const combinedCandidates = [
+    ...directCandidates,
+    ...ghResults,
     ...wikiResults,
     ...bingResults,
     ...openAlexResults,
     ...arxivResults,
-    ...hnResults,
-    ...ghResults
+    ...hnResults
   ];
 
   const merged = normalizeTopResults(combinedCandidates, count, `${query} ${federatedQuery}`);
+  // Garante que qualquer URL direta explicitamente fornecida pelo usuário permaneça no topo (#1)
+  if (directCandidates.length > 0) {
+    const directUrls = new Set(directCandidates.map((d) => d.url));
+    const reordered = [
+      ...directCandidates,
+      ...merged.filter((m) => !directUrls.has(m.url))
+    ].slice(0, count);
+    return {
+      results: reordered,
+      provider: 'keyless-web',
+      error: null
+    };
+  }
   if (merged.length > 0) {
     return {
       results: merged,

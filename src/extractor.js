@@ -62,6 +62,51 @@ async function extractReadablePage(targetUrl, fallbackTitle = '', options = {}) 
   }
 
   try {
+    // Fast-path para repositórios do GitHub: extrai diretamente o README.md completo via raw.githubusercontent.com
+    const ghRepoMatch =
+      parsedUrl.hostname.replace(/^www\./i, '').toLowerCase() === 'github.com' &&
+      parsedUrl.pathname.match(/^\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/?$/);
+
+    if (ghRepoMatch && !/^(topics|search|explore|orgs|users|settings|marketplace|pulls|issues)$/i.test(ghRepoMatch[1])) {
+      const owner = ghRepoMatch[1];
+      const repoClean = ghRepoMatch[2].replace(/\.git$/i, '');
+      const rawReadmeUrl = `https://raw.githubusercontent.com/${owner}/${repoClean}/HEAD/README.md`;
+      try {
+        const readmeRes = await httpRequest(rawReadmeUrl, {
+          method: 'GET',
+          headers: { 'User-Agent': 'DeepEvil/1.0 (Global Research Engine)' },
+          headersTimeout: timeoutMs,
+          bodyTimeout: timeoutMs,
+          signal: controller.signal
+        });
+        if (readmeRes && readmeRes.statusCode >= 200 && readmeRes.statusCode < 300) {
+          const mdBody = await readBodyWithLimit(readmeRes.body, MAX_HTML_BYTES);
+          const cleanedMd = String(mdBody || '')
+            .replace(/<[^>]+>/g, ' ')
+            .replace(/!\[[^\]]*\]\([^)]+\)/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+          if (cleanedMd.length >= MIN_READABLE_CHARS) {
+            const excerpt = clipAtBoundary(cleanedMd, maxChars);
+            const words = excerpt.split(/\s+/).filter(Boolean);
+            return {
+              url: `https://github.com/${owner}/${repoClean}`,
+              title: fallbackTitle || `${owner}/${repoClean} — GitHub Repository (README.md)`,
+              domain: 'github.com',
+              siteName: 'github.com',
+              excerpt,
+              wordCount: words.length,
+              charCount: excerpt.length
+            };
+          }
+        } else if (readmeRes?.body && typeof readmeRes.body.dump === 'function') {
+          await readmeRes.body.dump().catch(() => {});
+        }
+      } catch (_) {
+        // Continua para extração HTML padrão caso o repositório não tenha README.md em HEAD
+      }
+    }
+
     let currentUrl = parsedUrl.toString();
     let response = null;
 
@@ -138,7 +183,10 @@ async function extractReadablePage(targetUrl, fallbackTitle = '', options = {}) 
     const reader = new Readability(doc);
     const article = reader.parse();
 
-    const rawText = String(article?.textContent || '').replace(/\s+/g, ' ').trim();
+    let rawText = String(article?.textContent || '').replace(/\s+/g, ' ').trim();
+    if ((!rawText || rawText.length < MIN_READABLE_CHARS) && contentTypeHeader.includes('text/plain')) {
+      rawText = String(html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    }
     if (!rawText || rawText.length < MIN_READABLE_CHARS) {
       return null;
     }
