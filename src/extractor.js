@@ -1,11 +1,27 @@
 'use strict';
 
-const { request } = require('undici');
+const dns = require('node:dns');
+try {
+  dns.setDefaultResultOrder('ipv4first');
+} catch (_) {}
+
+const { request, Agent, setGlobalDispatcher } = require('undici');
 const { JSDOM, VirtualConsole } = require('jsdom');
 const { Readability } = require('@mozilla/readability');
 
+try {
+  setGlobalDispatcher(
+    new Agent({
+      connect: {
+        rejectUnauthorized: false,
+        timeout: 6500
+      }
+    })
+  );
+} catch (_) {}
+
 const DEFAULT_TIMEOUT_MS = 8000;
-const DEFAULT_MAX_CHARS = 3000;
+const DEFAULT_MAX_CHARS = 4500;
 const MAX_HTML_BYTES = 2 * 1024 * 1024; // 2 MB limite de segurança para parsing DOM
 const MIN_READABLE_CHARS = 80;
 
@@ -53,9 +69,9 @@ async function extractReadablePage(targetUrl, fallbackTitle = '', options = {}) 
       response = await httpRequest(currentUrl, {
         method: 'GET',
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
           'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7'
+          'Accept-Language': 'en-US,en;q=0.9,pt-BR;q=0.7,pt;q=0.6,*;q=0.5'
         },
         headersTimeout: timeoutMs,
         bodyTimeout: timeoutMs,

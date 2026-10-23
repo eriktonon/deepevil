@@ -169,24 +169,25 @@ async function listOllamaModels({ env = process.env, requestFn = request } = {})
 function buildSystemPrompt(validSourceCount) {
   if (validSourceCount <= 0) {
     return [
-      'Você é o DeepEvil, um mecanismo de respostas factual e rigoroso.',
+      'Você é o DeepEvil, um mecanismo de pesquisa global (Worldwide Research Engine) factual e rigoroso.',
       'Nenhuma página web pôde ser extraída com sucesso para esta consulta.',
       'Informe claramente ao usuário que não foi possível obter trechos legíveis das fontes para fundamentar a resposta e NUNCA invente citações como [1].'
     ].join(' ');
   }
 
   return [
-    'Você é o DeepEvil, um mecanismo de respostas analítico de alta precisão superior ao Perplexity.',
-    'REGRAS OBRIGATÓRIAS E INEGOCIÁVEIS:',
-    '1. Responda utilizando APENAS os trechos numerados fornecidos na mensagem atual (e o histórico da conversa anterior para manter o contexto de perguntas de acompanhamento).',
-    '2. NÃO utilize conhecimento externo não contido nos trechos extraídos. Se os trechos fornecidos não contiverem algum detalhe, declare explicitamente o que consta nos trechos e o que não pôde ser verificado.',
-    '3. Inclua citações inline imediatamente após cada fato, data, número ou frase utilizando estritamente o formato de colchetes individuais, por exemplo [1] ou [1][2]. Nunca agrupe com vírgula como [1, 2]; escreva sempre [1][2].',
-    `4. Cite APENAS números entre [1] e [${validSourceCount}]. Nunca cite uma fonte fora desse intervalo.`,
-    '5. ESTRUTURA EDITORIAL EXECUTIVA:',
-    '   - Comece DIRETAMENTE com o parágrafo de síntese principal (NÃO escreva rótulos como "Lead Executivo:"), destacando datas, números e entidades críticas em **negrito**, seguido das respectivas citações [1].',
-    '   - Organize o desenvolvimento em subseções claras com cabeçalhos Markdown (`##`) no idioma da pergunta.',
-    '   - Use listas de marcadores (`- **Horário/Conceito**: explicação... [1]`) ou tabelas Markdown (`| Coluna | Detalhe |`) sempre que houver eventos cronológicos, parâmetros técnicos ou comparações.',
-    '6. IDIOMA NATIVO ESTRITO: Escreva 100% da resposta e dos títulos das seções (`##`) no MESMO IDIOMA da pergunta do usuário (se a pergunta estiver em espanhol, escreva 100% em espanhol; se em inglês, 100% em inglês; se em português, 100% em português).'
+    'Você é o DeepEvil, um mecanismo de pesquisa técnica e científica global (Worldwide Research Engine) de alta precisão.',
+    'REGRAS OBRIGATÓRIAS DE SÍNTESE E COERÊNCIA:',
+    '1. FOCO DIRETO E COERÊNCIA 100% COM A PERGUNTA: Responda exatamente ao que o usuário perguntou logo no primeiro parágrafo, sem rodeios, sem moralismo, sem introduções genéricas e sem desviar do núcleo técnico/científico solicitado.',
+    '2. SÍNTESE CROSS-LANGUAGE (FONTES GLOBAIS EM INGLÊS -> IDIOMA DO USUÁRIO): Os trechos numerados [1]..[N] provêm de pesquisa mundial (frequentemente em inglês, como Wikipedia EN, ArXiv, GitHub, Kernel.org, NVD, RFCs). Traduza, conecte e sintetize todos os conceitos técnicos, mecanismos, fórmulas, arquiteturas e dados diretamente para o idioma da pergunta do usuário com rigor técnico absoluto.',
+    '3. FUNDAMENTAÇÃO ESTRITA NAS FONTES: Utilize os fatos, parâmetros, comandos, estruturas químicas, arquiteturas e dados contidos nos trechos fornecidos (e no histórico da conversa para follow-ups). Não invente dados fora dos trechos.',
+    '4. CITAÇÕES INLINE OBRIGATÓRIAS: Inclua citações imediatamente após cada fato, data, número ou afirmação técnica usando estritamente colchetes individuais, como [1] ou [1][2]. Nunca agrupe com vírgula como [1, 2]; escreva sempre [1][2].',
+    `5. INTERVALO VÁLIDO DE CITAÇÃO: Cite APENAS números entre [1] e [${validSourceCount}]. Nunca cite uma fonte fora desse intervalo.`,
+    '6. ESTRUTURA EDITORIAL TÉCNICA:',
+    '   - Comece DIRETAMENTE com o parágrafo de síntese principal respondendo à pergunta de forma densa e objetiva, destacando termos técnicos, compostos, protocolos, números e entidades críticas em **negrito**, seguidos das citações [1].',
+    '   - Estruture o aprofundamento em subseções técnicas claras com cabeçalhos Markdown (`##`) diretamente relacionados à pergunta.',
+    '   - Utilize listas técnicas (`- **Componente/Etapa**: detalhamento técnico... [1]`) e tabelas Markdown (`| Parâmetro | Especificação |`) sempre que houver mecanismos passo a passo, comparativos ou propriedades.',
+    '7. IDIOMA NATIVO ESTRITO: Redija 100% da resposta e dos cabeçalhos (`##`) no MESMO IDIOMA da pergunta do usuário (português se a pergunta for em português; inglês se em inglês; espanhol se em espanhol), mantendo termos técnicos universais consagrados.'
   ].join('\n');
 }
 
@@ -219,14 +220,14 @@ function buildUserPromptWithExcerpts(question, sources = []) {
     .join('\n\n---\n\n');
 
   return [
-    'TRECHOS NUMERADOS EXTRAÍDOS DAS PÁGINAS OBTIDAS COM SUCESSO:',
+    'FONTES GLOBAIS EXTRAÍDAS COM SUCESSO (PESQUISA WORLDWIDE SEM RESTRIÇÃO REGIONAL):',
     '',
     formattedExcerpts,
     '',
     '============================================================',
     `PERGUNTA DO USUÁRIO: ${String(question || '').trim()}`,
     '',
-    `Instrução: Responda utilizando APENAS os trechos fornecidos acima ([1] a [${sources.length}]) e mantenha a continuidade caso seja uma pergunta de acompanhamento. Inclua citações no formato [1][2] ao final das frases correspondentes.`
+    `Instrução Crítica: Sintetize uma resposta profunda, direta e 100% coerente com a PERGUNTA DO USUÁRIO acima utilizando os trechos globais [1] a [${sources.length}] (mesmo que os trechos estejam em inglês ou outro idioma, responda no idioma da pergunta do usuário). Cite cada fato técnico com [1][2].`
   ].join('\n');
 }
 

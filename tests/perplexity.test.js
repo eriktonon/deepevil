@@ -6,7 +6,18 @@ const http = require('node:http');
 const { Readable } = require('node:stream');
 
 const { createDatabase } = require('../src/db');
-const { FOCUS_MODES, applyFocusModeToQuery, searchBrave, buildContextualSearchQuery } = require('../src/search');
+const {
+  FOCUS_MODES,
+  applyFocusModeToQuery,
+  searchBrave,
+  searchKeylessWeb,
+  buildContextualSearchQuery,
+  toGlobalResearchQuery,
+  isExplicitBrazilQuery,
+  scoreResultCoherence,
+  normalizeTopResults,
+  reconstructOpenAlexAbstract
+} = require('../src/search');
 const { extractReadablePage, extractTopSources, buildSnippetFallbackSource } = require('../src/extractor');
 const { projectVectorToDim, embedTextSemantic } = require('../src/qdrant');
 const {
@@ -995,6 +1006,100 @@ test('12. Otimização #6: Hover Preview Card (.citation-popover) nas citações
   batcher.flush();
   assert.deepEqual(emitted, ['t1', 't4'], 'O flush final emite apenas o estado acumulado mais recente');
 });
+
+test('13. Global Research (Worldwide): remove limitação ao Brasil, converte termos PT->EN, filtra portais escolares rasos e prioriza fontes globais', async () => {
+  // 13.1 Conversão PT -> Global Research sem trava regional
+  assert.equal(isExplicitBrazilQuery('como funciona um reator nuclear de fissão'), false);
+  assert.equal(isExplicitBrazilQuery('taxa selic banco central do brasil'), true);
+
+  const globalReactor = toGlobalResearchQuery('como funciona um reator nuclear de fissão');
+  assert.match(globalReactor, /nuclear fission reactor/i);
+  assert.doesNotMatch(globalReactor, /\bcomo funciona\b/i);
+
+  const globalNapalm = toGlobalResearchQuery('como fazer napalm');
+  assert.match(globalNapalm, /synthesis composition napalm/i);
+
+  // 13.2 Ranking de coerência e filtragem de fazendas de conteúdo escolar (.br) vs fontes globais
+  const mixedCandidates = [
+    {
+      url: 'https://brasilescola.uol.com.br/fisica/energia-nuclear.htm',
+      title: 'Energia nuclear - Brasil Escola',
+      description: 'Resumo escolar básico sobre energia nuclear.'
+    },
+    {
+      url: 'https://todamateria.com.br/fissao-nuclear/',
+      title: 'Fissão Nuclear - Toda Matéria',
+      description: 'Texto escolar para ensino médio.'
+    },
+    {
+      url: 'https://en.wikipedia.org/wiki/Nuclear_reactor',
+      title: 'Nuclear reactor — Wikipedia (EN)',
+      description: 'A nuclear reactor is a device used to initiate and control a fission nuclear chain reaction.'
+    },
+    {
+      url: 'https://arxiv.org/abs/2401.00001',
+      title: 'Neutron transport in nuclear fission reactors — ArXiv',
+      description: 'Detailed Monte Carlo analysis of nuclear fission reactor core physics.'
+    }
+  ];
+
+  const ranked = normalizeTopResults(mixedCandidates, 6, 'como funciona um reator nuclear de fissão');
+  assert.equal(ranked.length, 2, 'Portais escolares rasos (Brasil Escola / Toda Matéria) devem ser descartados quando há fontes globais');
+  assert.equal(ranked[0].url, 'https://en.wikipedia.org/wiki/Nuclear_reactor');
+  assert.equal(ranked[1].url, 'https://arxiv.org/abs/2401.00001');
+
+  // 13.3 Verifica que searchKeylessWeb envia kl=wt-wt (Worldwide) no DuckDuckGo, ensearch=1 no Bing e consulta en.wikipedia.org primeiro
+  const requestedUrls = [];
+  const keylessRes = await searchKeylessWeb('arquitetura raft consenso distribuído', {
+    httpRequest: async (url) => {
+      requestedUrls.push(url);
+      if (url.includes('duckduckgo.com')) {
+        return { statusCode: 202, body: { dump: async () => {} } };
+      }
+      if (url.includes('bing.com')) {
+        return {
+          statusCode: 200,
+          body: { text: async () => '<html><body></body></html>' }
+        };
+      }
+      if (url.includes('en.wikipedia.org')) {
+        return {
+          statusCode: 200,
+          body: {
+            json: async () => ({
+              query: {
+                search: [
+                  {
+                    title: 'Raft (algorithm)',
+                    snippet: 'Raft is a distributed consensus algorithm designed as an alternative to Paxos.'
+                  }
+                ]
+              }
+            })
+          }
+        };
+      }
+      return { statusCode: 404, body: { text: async () => '' } };
+    }
+  });
+
+  assert.ok(requestedUrls.some((u) => u.includes('duckduckgo.com') && u.includes('kl=wt-wt')));
+  assert.ok(requestedUrls.some((u) => u.includes('bing.com') && u.includes('ensearch=1') && u.includes('setmkt=en-US')));
+  assert.ok(requestedUrls.some((u) => u.includes('en.wikipedia.org')));
+  assert.equal(keylessRes.results[0].url, 'https://en.wikipedia.org/wiki/Raft_(algorithm)');
+
+  // 13.4 Reconstrução de abstract científico do OpenAlex
+  const abstract = reconstructOpenAlexAbstract({
+    Raft: [0],
+    achieves: [1],
+    consensus: [2],
+    via: [3],
+    leader: [4],
+    election: [5]
+  });
+  assert.equal(abstract, 'Raft achieves consensus via leader election');
+});
+
 
 
 
