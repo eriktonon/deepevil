@@ -22,6 +22,19 @@ Combinando uma federação global de busca sem trava regional (**DuckDuckGo Worl
 
 ---
 
+## Interface & Demonstração Visual
+
+### 1. Tela Inicial — Focus Modes & Seletor Ao Vivo de Modelos Ollama
+![DeepEvil Home Screen](./public/screenshots/deepevil-home.png)
+
+### 2. Pesquisa Global Multi-Turn — Arquiteturas P2P (IEEE, ArXiv, ProbeLab & GitHub)
+![DeepEvil P2P Research](./public/screenshots/deepevil-p2p-research.png)
+
+### 3. Descoberta Direta de Repositórios Open-Source no GitHub (Modelagem 3D & CAD)
+![DeepEvil GitHub Repositories Discovery](./public/screenshots/deepevil-3d-github.png)
+
+---
+
 ## Passo a Passo: Como Instalar e Rodar Localmente com o Ollama
 
 ### Pré-requisitos
