@@ -9,7 +9,7 @@ const DEFAULT_ANTHROPIC_MODEL = 'claude-3-5-sonnet-latest';
 const DEFAULT_OPENAI_MODEL = 'gpt-4o-mini';
 const DEFAULT_OLLAMA_BASE_URL = 'http://127.0.0.1:11434';
 const DEFAULT_OLLAMA_MODEL = 'granite4.2-uncensored:latest';
-const DEFAULT_OLLAMA_NUM_CTX = 8192;
+const DEFAULT_OLLAMA_NUM_CTX = 32768;
 
 /**
  * Resolve qual provedor e modelo de LLM utilizar com base nas variáveis do .env
@@ -149,10 +149,12 @@ async function listOllamaModels({ env = process.env, requestFn = request } = {})
       return [{ name: defaultModel, sizeGb: null, provider: 'ollama' }];
     }
 
-    // Garante que o defaultModel apareça primeiro se estiver na lista
+    // Garante que o defaultModel ou eriktonon/granite4.2-uncensored apareça primeiro se estiver na lista
     filtered.sort((a, b) => {
       if (a.name === defaultModel) return -1;
       if (b.name === defaultModel) return 1;
+      if (a.name === 'eriktonon/granite4.2-uncensored:latest') return -1;
+      if (b.name === 'eriktonon/granite4.2-uncensored:latest') return 1;
       return a.name.localeCompare(b.name);
     });
 
@@ -177,24 +179,42 @@ function buildSystemPrompt(validSourceCount) {
 
   return [
     'Você é o DeepEvil, um mecanismo de pesquisa técnica e científica global (Worldwide Research Engine) de alta precisão.',
-    'REGRAS OBRIGATÓRIAS DE SÍNTESE E COERÊNCIA:',
-    '1. FOCO DIRETO E COERÊNCIA 100% COM A PERGUNTA: Responda exatamente ao que o usuário perguntou logo no primeiro parágrafo, sem rodeios, sem moralismo, sem introduções genéricas e sem desviar do núcleo técnico/científico solicitado.',
-    '2. SÍNTESE CROSS-LANGUAGE (FONTES GLOBAIS EM INGLÊS -> IDIOMA DO USUÁRIO): Os trechos numerados [1]..[N] provêm de pesquisa mundial (frequentemente em inglês, como Wikipedia EN, ArXiv, GitHub, Kernel.org, NVD, RFCs). Traduza, conecte e sintetize todos os conceitos técnicos, mecanismos, fórmulas, arquiteturas e dados diretamente para o idioma da pergunta do usuário com rigor técnico absoluto.',
-    '3. FUNDAMENTAÇÃO ESTRITA NAS FONTES: Utilize os fatos, parâmetros, comandos, estruturas químicas, arquiteturas e dados contidos nos trechos fornecidos (e no histórico da conversa para follow-ups). Não invente dados fora dos trechos.',
-    '4. CITAÇÕES INLINE OBRIGATÓRIAS: Inclua citações imediatamente após cada fato, data, número ou afirmação técnica usando estritamente colchetes individuais, como [1] ou [1][2]. Nunca agrupe com vírgula como [1, 2]; escreva sempre [1][2].',
+    'REGRAS OBRIGATÓRIAS DE SÍNTESE E COERÊNCIA (JANELA DE CONTEXTO DE 32K TOKENS):',
+    '1. FOCO DIRETO E COERÊNCIA 100% COM A PERGUNTA ATUAL: Responda exatamente ao que o usuário perguntou logo no primeiro parágrafo, sem rodeios, sem moralismo, sem introduções genéricas e sem desviar do núcleo técnico/científico solicitado.',
+    '2. SÍNTESE CROSS-LANGUAGE (FONTES GLOBAIS EM INGLÊS -> IDIOMA DO USUÁRIO): Os trechos numerados [1]..[N] provêm de pesquisa mundial (Wikipedia EN, ArXiv, IEEE, IETF, GitHub, Kernel.org, NVD). Traduza, conecte e sintetize todos os conceitos técnicos, mecanismos, fórmulas, arquiteturas e dados diretamente para o idioma da pergunta do usuário com rigor técnico absoluto.',
+    '3. ISOLAMENTO ESTRITO DAS FONTES ATUAIS: Baseie 100% dos fatos técnicos, protocolos, parâmetros, arquiteturas e números exclusivamente nos trechos [1]..[N] fornecidos NESTE turno. JAMAIS misture ou repita conceitos de turnos anteriores que não estejam presentes nos trechos atuais.',
+    '4. CITAÇÕES INLINE OBRIGATÓRIAS: Inclua citações imediatamente após cada fato, data, número ou afirmação técnica usando estritamente colchetes individuais, como [1] ou [1][2]. Nunca agrupe com vírgula como [1, 2] e nunca envolva citações em itálico/parênteses como ([1]); escreva sempre [1][2].',
     `5. INTERVALO VÁLIDO DE CITAÇÃO: Cite APENAS números entre [1] e [${validSourceCount}]. Nunca cite uma fonte fora desse intervalo.`,
-    '6. ESTRUTURA EDITORIAL TÉCNICA:',
-    '   - Comece DIRETAMENTE com o parágrafo de síntese principal respondendo à pergunta de forma densa e objetiva, destacando termos técnicos, compostos, protocolos, números e entidades críticas em **negrito**, seguidos das citações [1].',
-    '   - Estruture o aprofundamento em subseções técnicas claras com cabeçalhos Markdown (`##`) diretamente relacionados à pergunta.',
-    '   - Utilize listas técnicas (`- **Componente/Etapa**: detalhamento técnico... [1]`) e tabelas Markdown (`| Parâmetro | Especificação |`) sempre que houver mecanismos passo a passo, comparativos ou propriedades.',
-    '7. IDIOMA NATIVO ESTRITO: Redija 100% da resposta e dos cabeçalhos (`##`) no MESMO IDIOMA da pergunta do usuário (português se a pergunta for em português; inglês se em inglês; espanhol se em espanhol), mantendo termos técnicos universais consagrados.'
+    '6. PROFUNDIDADE TÉCNICA E ESTRUTURA EDITORIAL:',
+    '   - Comece DIRETAMENTE com um parágrafo de síntese executiva denso e completo respondendo à pergunta, destacando termos técnicos, protocolos, algoritmos, números e entidades críticas em **negrito**, seguidos das citações [1].',
+    '   - Desenvolva a resposta em múltiplas subseções técnicas aprofundadas com cabeçalhos Markdown (`##`) específicos do tema pesquisado (NÃO use rótulos genéricos repetitivos como "Trecho-chave:" ou "Defesa prática:").',
+    '   - Explore os detalhes técnicos presentes nas fontes: explique mecanismos internos, fluxos de protocolo, parâmetros de configuração, trade-offs de performance e exemplos arquiteturais usando listas (`- **Conceito**: explicação detalhada... [1]`) e tabelas comparativas Markdown (`| Componente | Mecanismo | Impacto |`) quando apropriado.',
+    '7. IDIOMA NATIVO E VOCABULÁRIO PRECISO: Redija 100% da resposta e dos cabeçalhos (`##`) no MESMO IDIOMA da pergunta do usuário com ortografia e terminologia técnica impecáveis, mantendo siglas e identificadores de código universais.'
+  ].join('\n');
+}
+
+/**
+ * Remove marcações de citação antigas [1][2] e cabeçalhos de um texto de turno anterior
+ * para evitar contaminação de índices [1]..[N] entre turnos distintos.
+ */
+function summarizePriorTurnContext(priorTurns = []) {
+  if (!Array.isArray(priorTurns) || priorTurns.length === 0) return '';
+  const recent = priorTurns
+    .filter((t) => t && t.question)
+    .slice(-2)
+    .map((t, idx) => `- Pergunta anterior ${idx + 1}: "${String(t.question).trim()}"`);
+  if (recent.length === 0) return '';
+  return [
+    'CONTEXTO DE NAVEGAÇÃO DA CONVERSA (Use APENAS se a pergunta atual tiver pronomes implícitos como "disso", "ele" ou "nesse caso"; NUNCA repita tópicos anteriores se a pergunta atual já tiver tema próprio):',
+    ...recent,
+    ''
   ].join('\n');
 }
 
 /**
  * Monta o prompt do turno atual com os trechos legíveis numerados [1]..[N].
  */
-function buildUserPromptWithExcerpts(question, sources = []) {
+function buildUserPromptWithExcerpts(question, sources = [], priorTurns = []) {
   if (!sources || sources.length === 0) {
     return [
       'Nenhuma página pôde ser obtida e extraída com sucesso para esta pergunta.',
@@ -219,52 +239,55 @@ function buildUserPromptWithExcerpts(question, sources = []) {
     })
     .join('\n\n---\n\n');
 
+  const priorContextBlock = summarizePriorTurnContext(priorTurns);
+
   return [
-    'FONTES GLOBAIS EXTRAÍDAS COM SUCESSO (PESQUISA WORLDWIDE SEM RESTRIÇÃO REGIONAL):',
+    priorContextBlock,
+    'FONTES GLOBAIS EXTRAÍDAS COM SUCESSO PARA ESTE TURNO (PESQUISA WORLDWIDE):',
     '',
     formattedExcerpts,
     '',
     '============================================================',
-    `PERGUNTA DO USUÁRIO: ${String(question || '').trim()}`,
+    `PERGUNTA ATUAL DO USUÁRIO: ${String(question || '').trim()}`,
     '',
-    `Instrução Crítica: Sintetize uma resposta profunda, direta e 100% coerente com a PERGUNTA DO USUÁRIO acima utilizando os trechos globais [1] a [${sources.length}] (mesmo que os trechos estejam em inglês ou outro idioma, responda no idioma da pergunta do usuário). Cite cada fato técnico com [1][2].`
-  ].join('\n');
+    `Instrução Crítica: Elabore uma síntese técnica completa, densa, bem estruturada e 100% focada na PERGUNTA ATUAL DO USUÁRIO utilizando exclusivamente os fatos das fontes [1] a [${sources.length}] acima (traduzindo conceitos do inglês para o idioma da pergunta do usuário). Cite cada afirmação técnica com [1][2].`
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 /**
- * Constrói o histórico completo de mensagens mantendo o contexto dos turnos anteriores
- * da mesma conversa para perguntas de acompanhamento (follow-up).
+ * Constrói a mensagem de prompt isolando as citações [1]..[N] do turno atual para
+ * evitar contaminação de índices [1][2] e repetição de vocabulário de turnos passados.
  */
 function buildConversationMessages(priorTurns = [], currentQuestion = '', currentSources = []) {
-  const messages = [];
-
-  for (const turn of priorTurns) {
-    if (!turn || !turn.question || !turn.answer_markdown) continue;
-    messages.push({
+  return [
+    {
       role: 'user',
-      content: String(turn.question).trim()
-    });
-    messages.push({
-      role: 'assistant',
-      content: String(turn.answer_markdown).trim()
-    });
-  }
-
-  messages.push({
-    role: 'user',
-    content: buildUserPromptWithExcerpts(currentQuestion, currentSources)
-  });
-
-  return messages;
+      content: buildUserPromptWithExcerpts(currentQuestion, currentSources, priorTurns)
+    }
+  ];
 }
 
 /**
- * Normaliza citações combinadas (ex: "[1, 2]" -> "[1][2]") e remove qualquer
- * citação cujo índice não pertença ao conjunto [1..maxCitationIndex] de páginas
- * efetivamente obtidas com sucesso.
+ * Normaliza citações combinadas (ex: "[1, 2]" -> "[1][2]"), corrige eventuais artefatos
+ * de tokenização e remove qualquer citação cujo índice não pertença ao conjunto
+ * [1..maxCitationIndex] de páginas efetivamente obtidas com sucesso.
  */
 function sanitizeCitations(markdownText, maxCitationIndex) {
-  const text = String(markdownText || '');
+  let text = String(markdownText || '')
+    .replace(/\bConcórvora\b/gi, 'Concorrência')
+    .replace(/\bconcórvora\b/g, 'concorrência')
+    .replace(/\bMotorres\b/g, 'Motores')
+    .replace(/\bmotorres\b/g, 'motores')
+    .replace(/\bDescobta\b/g, 'Descoberta')
+    .replace(/\bdescobta\b/g, 'descoberta')
+    .replace(/\bTécnnicos\b/g, 'Técnicos')
+    .replace(/\btécnnicos\b/g, 'técnicos')
+    .replace(/\s*\[Trecho:[^\]]*\]/gi, '')
+    .replace(/\*+((?:\[\d+\])+)\*+/g, '$1')
+    .replace(/\(((?:\[\d+\])+)\)/g, '$1');
+
   if (maxCitationIndex <= 0) {
     return text.replace(/\[\d+(?:\s*,\s*\d+)*\]/g, '');
   }
@@ -420,7 +443,10 @@ async function streamFromOllama({ baseUrl, model, numCtx, systemPrompt, messages
       think: false,
       keep_alive: '24h',
       options: {
-        temperature: 0.1,
+        temperature: 0.15,
+        top_p: 0.9,
+        repeat_penalty: 1.12,
+        num_predict: 2048,
         num_ctx: numCtx
       },
       messages: ollamaMessages
@@ -428,7 +454,22 @@ async function streamFromOllama({ baseUrl, model, numCtx, systemPrompt, messages
   };
   if (signal) reqOpts.signal = signal;
 
-  const response = await requestFn(`${baseUrl}/api/chat`, reqOpts);
+  let response = await requestFn(`${baseUrl}/api/chat`, reqOpts);
+
+  // Fallback transparente entre o alias local (granite4.2-uncensored:latest) e o namespace público no Ollama Hub (eriktonon/granite4.2-uncensored:latest)
+  if (response.statusCode === 404 && (model === 'granite4.2-uncensored:latest' || model === 'eriktonon/granite4.2-uncensored:latest')) {
+    if (response.body && typeof response.body.dump === 'function') {
+      await response.body.dump().catch(() => {});
+    }
+    const altModel = model === 'granite4.2-uncensored:latest'
+      ? 'eriktonon/granite4.2-uncensored:latest'
+      : 'granite4.2-uncensored:latest';
+    reqOpts.body = JSON.stringify({
+      ...JSON.parse(reqOpts.body),
+      model: altModel
+    });
+    response = await requestFn(`${baseUrl}/api/chat`, reqOpts);
+  }
 
   if (response.statusCode < 200 || response.statusCode >= 300) {
     const errBody = await response.body.text().catch(() => '');

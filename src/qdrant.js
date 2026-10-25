@@ -5,7 +5,7 @@ const { request } = require('undici');
 
 const DEFAULT_QDRANT_URLS = [
   'http://127.0.0.1:6333',
-  'http://192.168.3.109:6333'
+  'http://localhost:6333'
 ];
 const DEFAULT_OLLAMA_URL = 'http://127.0.0.1:11434';
 const DEFAULT_EMBED_MODEL = 'bge-m3:latest';

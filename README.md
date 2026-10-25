@@ -1,23 +1,115 @@
-# DeepEvil — Enterprise Answer Engine (`localhost:3000`)
+# DeepEvil — Worldwide Research & Local AI Answer Engine
 
 <p align="left">
   <strong>Architected by Erik Tonon</strong> · <strong>EdgeSearch &amp; PE-AGENTS-IBM Ecosystem</strong><br>
-  <em>Build to Manage (BTM) · Zero Telemetry · Dual-Persistence (Qdrant Vector DB + SQLite WAL) · Live Ollama Multi-LLM Selector</em>
+  <em>Worldwide Research Federation · 100% Local AI via Ollama (`eriktonon/granite4.2-uncensored` 32K) · Zero Telemetry · SQLite WAL + Optional Qdrant Vector DB</em>
 </p>
 
 ---
 
-## Visão Geral
+## O que é o DeepEvil?
 
-O **DeepEvil** é um mecanismo de respostas pessoal e corporativo (*Answer Engine*), projetado sob a filosofia **Build to Manage (BTM)** por **Erik Tonon**. Com a identidade minimalista e tipografia geométrica clássica nas 4 cores do Google (`#4285F4`, `#EA4335`, `#FBBC05`, `#34A853`) sobre tema escuro de alta precisão, o motor opera exclusivamente em `127.0.0.1:3000` sem telemetria externa.
+O **DeepEvil** é um mecanismo de pesquisa técnica, científica e de engenharia (*Worldwide AI Answer Engine*) que roda **100% localmente** na sua máquina (`http://localhost:3000`), sem mensalidades de API e sem telemetria externa.
 
-Para cada pergunta submetida:
-1. **Busca Web Multi-Provider (`undici`)**: Captura os **6 principais resultados** via **SearXNG JSON API** (`localhost:8888`), **Brave Search API** ou **Keyless Web Search** integrado.
-2. **Extração Limpa de DOM (`@mozilla/readability` + `jsdom`)**: Faz o download concorrente das 6 páginas via `undici` e extrai exclusivamente o corpo legível do artigo. Páginas inacessíveis ou bloqueadas são descartadas silenciosamente e **jamais são citadas**.
-3. **Seletor Dinâmico de LLM (Ollama / Anthropic / OpenAI)**: Consulta em tempo real a API local do **Ollama** (`GET http://127.0.0.1:11434/api/tags`) e permite selecionar na própria barra de pesquisa qual modelo executará a síntese (ex.: `granite4.2:latest`, `granite4.2:30b`, `gemma4:31b`, `qwen2.5-coder:14b`, `jarvis:14b-v4`, `mistral-nemo:latest`, etc.), entregando a resposta via **Server-Sent Events (SSE)** com citações verificadas `[1][2]`.
-4. **Persistência Enterprise Híbrida (Qdrant Vector DB + SQLite WAL)**:
-   - **Qdrant Vector DB (`http://127.0.0.1:6333` / `http://192.168.3.109:6333`)**: Indexa automaticamente cada turno concluído e cada fonte extraída pelo Readability na coleção vetorial `deepevil_conversations` (vetores Cosine de 384 dimensões), habilitando busca semântica via `/api/qdrant/search?q=...`.
-   - **SQLite WAL (`better-sqlite3`)**: Mantém o cache transacional local de baixíssima latência (`data/perplexity.sqlite`) para a barra lateral de conversas (identificadas pela primeira pergunta feita) e o contexto completo de perguntas de acompanhamento (*follow-up*).
+Combinando uma federação global de busca sem trava regional (**DuckDuckGo Worldwide**, **Wikipedia EN**, **OpenAlex 250M+ papers**, **ArXiv**, **GitHub API**, **HackerNews** e **SearXNG**) com o modelo local **`eriktonon/granite4.2-uncensored`** (janela de **32.768 tokens** no **Ollama**), o DeepEvil lê o conteúdo real das páginas via `@mozilla/readability` e gera respostas técnicas densas, em tempo real via **Server-Sent Events (SSE)**, com citações verificadas `[1][2]` e cartões de preview interativos.
+
+### Destaques Principais
+- **Pesquisa Global Sem Limitação Regional (Worldwide Research)**: Converte consultas técnicas em português/espanhol/inglês para buscar diretamente na literatura internacional primária (ArXiv, IEEE, OpenAlex, GitHub, RFCs, Wikipedia EN), descartando portais rasos.
+- **Extração Direta de Repositórios GitHub**: Detecta URLs ou pedidos de código open-source, consulta a API do GitHub ordenada por estrelas (`sort=stars`) e extrai o `README.md` completo via `raw.githubusercontent.com`.
+- **5 Modos de Foco (`Focus Modes`)**: `Web`, `SecOps / CVE`, `Code / Docs`, `Academic` e `Híbrido (Local + Web)`.
+- **Motor LLM Local de 32K (`eriktonon/granite4.2-uncensored`)**: Baseado no IBM Granite 4.2 8B com *Orthogonal Refusal Abliteration* + *SecOps LoRA*, configurado com `num_ctx=32768`, `repeat_penalty=1.12` e isolamento estrito de citações entre turnos.
+- **Seletor Multi-LLM Ao Vivo**: Troque de modelo a qualquer momento direto na interface (qualquer modelo instalado no seu Ollama local, ou opcionalmente Claude / OpenAI), além de botão **Regerar** (`0ms` de nova busca web) e **Traduzir** instantâneo (`PT`, `EN`, `ES`, `FR`, `DE`).
+
+---
+
+## Passo a Passo: Como Instalar e Rodar Localmente com o Ollama
+
+### Pré-requisitos
+- **Node.js 20+** instalado ([nodejs.org](https://nodejs.org/))
+- **Ollama** instalado ([ollama.com/download](https://ollama.com/download))
+- **Git** instalado
+
+---
+
+### Passo 1: Instalar o Ollama e Baixar o Modelo `granite4.2-uncensored` (32K)
+
+Com o Ollama instalado e rodando na sua máquina, abra o terminal (PowerShell, CMD, Linux ou macOS) e baixe o modelo oficial do DeepEvil publicado no Ollama Hub:
+
+```bash
+# 1. Baixe o modelo principal de 32K tokens (5.7 GB)
+ollama pull eriktonon/granite4.2-uncensored:latest
+
+# 2. (Opcional) Baixe o modelo de embeddings semânticos bge-m3 caso use Qdrant Vector DB
+ollama pull bge-m3:latest
+```
+
+> **Dica:** Você também pode usar qualquer outro modelo que já tenha no seu Ollama (`qwen2.5-coder:14b`, `llama3.1`, `deepseek-r1`, `mistral-nemo`, etc.) selecionando-o diretamente no menu suspenso da interface do DeepEvil.
+
+---
+
+### Passo 2: Clonar o Repositório e Instalar as Dependências
+
+```bash
+# Clone o repositório oficial
+git clone https://github.com/eriktonon/deepevil.git
+cd deepevil
+
+# Instale as dependências Node.js
+npm install
+```
+
+---
+
+### Passo 3: Configurar o `.env` (Opcional — Funciona Zero-Config!)
+
+O DeepEvil já funciona **sem precisar criar chaves de API**. Se quiser personalizar portas ou modelos, copie o arquivo de exemplo:
+
+```bash
+# Linux / macOS
+cp .env.example .env
+
+# Windows (PowerShell)
+Copy-Item .env.example .env
+```
+
+Configuração padrão no `.env`:
+
+```ini
+PORT=3000
+HOST=127.0.0.1
+
+# Busca Global sem chave (keyless) ou SearXNG local (searxng)
+SEARCH_PROVIDER=keyless
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_MODEL=eriktonon/granite4.2-uncensored:latest
+OLLAMA_NUM_CTX=32768
+MAX_CHARS_PER_SOURCE=5500
+```
+
+---
+
+### Passo 4: Iniciar o DeepEvil
+
+```bash
+# Rodar a suíte de testes determinísticos (14 testes E2E)
+npm test
+
+# Iniciar o servidor
+npm start
+```
+
+Abra no navegador:
+👉 **`http://localhost:3000`**
+
+---
+
+## Executando via Docker Compose (Opcional com SearXNG Integrado)
+
+Se preferir subir o **DeepEvil** junto com um container **SearXNG** dedicado:
+
+```bash
+docker compose up -d --build
+```
 
 ---
 
@@ -25,110 +117,36 @@ Para cada pergunta submetida:
 
 ```mermaid
 flowchart LR
-    UI["Interface DeepEvil\n(htmx + SSE + Google Pill Bar)"] -->|"POST /ask (question + model)"| SRV["Node.js + Express\n(127.0.0.1:3000)"]
-    UI <-->|"GET /api/models"| OLLAMA_TAGS["Ollama API\n(127.0.0.1:11434/api/tags)"]
-    SRV -->|"1. Top 6 URLs via undici"| SEARCH["SearXNG / Brave / Keyless"]
-    SEARCH -->|"URLs Candidatas"| EXT["Extrator @mozilla/readability\n+ jsdom (ignora falhas)"]
-    EXT -->|"Trechos Numerados [1]..[6]"| LLM["Streaming LLM\n(Ollama / Claude / GPT)"]
-    LLM -->|"Tokens SSE + Citações [1][2]"| UI
-    SRV <-->|"Cache Transacional WAL"| SQLITE[("SQLite WAL\n(better-sqlite3)")]
-    SRV -->|"Indexação Vetorial Cosine 384d"| QDRANT[("Qdrant Vector DB\n(deepevil_conversations)")]
+    UI["Interface DeepEvil\n(htmx + SSE + Focus Modes)"] -->|"POST /ask"| SRV["Node.js + Express\n(127.0.0.1:3000)"]
+    UI <-->|"GET /api/models"| OLLAMA_TAGS["Ollama Local API\n(127.0.0.1:11434)"]
+    SRV -->|"Worldwide Federation"| SEARCH["DuckDuckGo Global / SearXNG /\nWikipedia EN / OpenAlex / ArXiv / GitHub"]
+    SEARCH -->|"Top 6 URLs"| EXT["Extrator @mozilla/readability\n+ GitHub Raw README (5500 chars/fonte)"]
+    EXT -->|"Trechos Numerados [1]..[6]"| LLM["Streaming LLM (32K Context)\neriktonon/granite4.2-uncensored"]
+    LLM -->|"Frame-Batched SSE + Citações [1][2]"| UI
+    SRV <-->|"Persistência Local"| SQLITE[("SQLite WAL\n(better-sqlite3)")]
+    SRV -.->|"Opcional: Híbrido 384d"| QDRANT[("Qdrant Vector DB\n(deepevil_conversations)")]
 ```
 
 ---
 
-## Configuração Rápida (`.env`)
-
-Copie o arquivo `.env.example` para `.env`:
-
-```bash
-cp .env.example .env
-```
-
-### Variáveis Suportadas
-
-```ini
-PORT=3000
-HOST=127.0.0.1
-
-# Motor de Busca: searxng | brave | keyless
-SEARCH_PROVIDER=keyless
-SEARXNG_BASE_URL=http://127.0.0.1:8888
-BRAVE_SEARCH_API_KEY=keyless
-
-# Provedor de LLM: ollama | anthropic | openai
-LLM_PROVIDER=ollama
-OLLAMA_BASE_URL=http://127.0.0.1:11434
-OLLAMA_MODEL=granite4.2-uncensored:latest
-OLLAMA_NUM_CTX=8192
-
-# Persistência Vetorial Qdrant + SQLite WAL
-QDRANT_URL=http://127.0.0.1:6333
-QDRANT_COLLECTION=deepevil_conversations
-SQLITE_DB_PATH=./data/perplexity.sqlite
-
-# Opcional: Chaves Cloud caso deseje alternar do Ollama para APIs externas
-ANTHROPIC_API_KEY=
-ANTHROPIC_MODEL=claude-3-5-sonnet-latest
-OPENAI_API_KEY=
-OPENAI_MODEL=gpt-4o-mini
-```
-
----
-
-## Executando Localmente
-
-```bash
-# 1. Instalar dependências
-npm install
-
-# 2. Executar suíte de testes determinísticos (Node Test Runner)
-npm test
-
-# 3. Iniciar o servidor em http://localhost:3000
-npm start
-```
-
-### Subindo o SearXNG Local (Opcional via Docker Compose)
-
-```bash
-docker compose up -d searxng
-```
-
----
-
-## Endpoints de API & Observabilidade
+## Endpoints Principais
 
 | Método | Rota | Descrição |
 | :--- | :--- | :--- |
-| `GET` | `/` | Interface principal do **DeepEvil** com ícone **D** 4-cores e seletor ao vivo de modelos Ollama |
-| `POST` | `/ask` | Registra pergunta (inicial ou *follow-up*) com o modelo LLM selecionado |
-| `GET` | `/stream/:turnId` | Stream SSE em tempo real (`status`, `sources`, `answer`, `followups`, `done`) |
-| `GET` | `/turns/:turnId/translate/stream` | Stream SSE de tradução em tempo real (PT/EN/ES/FR/DE/IT) com cache SQLite `0ms` e `think: false` (~277ms TTFT) |
-| `POST` | `/turns/:turnId/translate` | Endpoint REST de tradução de resposta preservando citações `[1][2]` e tabelas Markdown |
-| `GET` | `/turns/:turnId/export.md` | Exportação completa da síntese e fontes verificadas em arquivo Markdown (`.md`) |
-| `GET` | `/api/models` | Lista em tempo real os modelos instalados no servidor Ollama local |
-| `GET` | `/api/qdrant/status` | Verifica conectividade, coleção e contagem de pontos no **Qdrant Vector DB** |
-| `GET` | `/api/qdrant/search?q=...` | Executa busca vetorial semântica sobre respostas e fontes indexadas no Qdrant |
-| `GET` | `/health` | Healthcheck BTM consolidado (Localhost Guard + LLM + Qdrant Vector DB) |
+| `GET` | `/` | Interface principal do **DeepEvil** com seletor ao vivo de modelos Ollama e Focus Modes |
+| `POST` | `/ask` | Inicia um novo turno de pesquisa global ou *follow-up* contextual |
+| `GET` | `/stream/:turnId` | Stream SSE em tempo real (`status`, `sources`, `answer`, `done`) com Frame Batching (~24fps) |
+| `POST` | `/turns/:turnId/rewrite` | Regera a resposta com outro modelo LLM reutilizando as fontes já extraídas (`0ms` de busca web) |
+| `POST` | `/turns/:turnId/stop` | Interrompe imediatamente a geração de tokens em andamento |
+| `GET` | `/turns/:turnId/translate/stream` | Tradução instantânea via SSE (`pt-BR`, `en`, `es`, `fr`, `de`) preservando citações `[1][2]` |
+| `GET` | `/turns/:turnId/export.md` | Exporta o relatório técnico completo da pesquisa com fontes em Markdown (`.md`) |
+| `GET` | `/api/models` | Lista dinamicamente todos os modelos disponíveis no Ollama local |
+| `GET` | `/health` | Healthcheck consolidado do servidor, LLM e banco de dados |
 
 ---
 
-## Estimativa de Custo por Consulta
-
-Cada consulta extrai até 6 páginas web (~6.500 tokens de entrada somando *system prompt*, histórico e trechos do Readability) e gera ~600 tokens de resposta com citações `[1][2]`:
-
-| Configuração (Busca + LLM) | Custo de Busca | Custo de LLM | **Custo Total / Consulta** | **1.000 Consultas / Mês** |
-| :--- | :---: | :---: | :---: | :---: |
-| **Ollama Local + SearXNG / Keyless (Padrão)** | **US\$ 0,00** | **US\$ 0,00** | **US\$ 0,00 (R\$ 0,00)** | **US\$ 0,00** |
-| **Brave Free Tier + OpenAI (`gpt-4o-mini`)** | US\$ 0,00 *(até 2.000/mês)* | ~US\$ 0,0013 | **~US\$ 0,0013** | **~US\$ 1,30** |
-| **Brave Free Tier + Claude (`claude-3-5-sonnet`)** | US\$ 0,00 *(até 2.000/mês)* | ~US\$ 0,0285 | **~US\$ 0,0285** | **~US\$ 28,50** |
-| **Brave Base Plan + OpenAI (`gpt-4o`)** | US\$ 0,0050 | ~US\$ 0,0222 | **~US\$ 0,0272** | **~US\$ 27,20** |
-
----
-
-## Autor & Governança
+## Licença & Autor
 
 Desenvolvido por **Erik Tonon**  
-**EdgeSearch · PE-AGENTS-IBM Architecture · Build to Manage (BTM)**  
-Repositório GitLab Homelab: `http://192.168.3.112/eriktonon/deepevil`
+Licenciado sob **Apache License 2.0** — veja o arquivo [LICENSE](LICENSE).  
+Modelo Oficial no Ollama Hub: [`https://ollama.com/eriktonon/granite4.2-uncensored`](https://ollama.com/eriktonon/granite4.2-uncensored)

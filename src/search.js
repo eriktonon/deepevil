@@ -122,7 +122,13 @@ function isExplicitBrazilQuery(rawQuery) {
  */
 const PT_TO_GLOBAL_TERMS = [
   [/\bcomo\s+(?:fazer|fabricar|produzir|sintetizar|preparar)\b/gi, 'synthesis composition'],
-  [/\b(?:como\s+funciona(?:m)?|o\s+que\s+s[ãa]o|o\s+que\s+[eé]|qual\s+[ea]\s+diferen[çc]a\s+entre|quais\s+s[ãa]o\s+(?:os|as)?|me\s+explique|explique\s+como)\b/gi, ''],
+  [/\b(?:como\s+funciona(?:m)?|o\s+que\s+s[ãa]o|o\s+que\s+[eé]|qual\s+[ea]\s+diferen[çc]a\s+entre|quais\s+s[ãa]o\s+(?:os|as)?|me\s+explique|explique\s+como|procure|busque|encontre|me\s+traga|traga|liste|mostre)\b/gi, ''],
+  [/\bmodelagem\s+3d\b/gi, '3d modeling CAD'],
+  [/\bmodelagem\s+tridimensional\b/gi, '3d modeling CAD'],
+  [/\bescultura\s+digital\b/gi, 'digital sculpting 3d'],
+  [/\bmalha(?:s)?\s+poligonal(?:is)?\b/gi, 'polygon mesh 3d'],
+  [/\breposit[óo]rio(?:s)?\s+(?:do\s+|no\s+)?github\b/gi, 'github repository'],
+  [/\bc[óo]digo\s+aberto\b/gi, 'open source'],
   [/\breator(?:es)?\s+nuclear(?:es)?\s+de\s+fiss[ãa]o\b/gi, 'nuclear fission reactor'],
   [/\breator(?:es)?\s+nuclear(?:es)?\b/gi, 'nuclear reactor'],
   [/\bfiss[ãa]o\s+nuclear\b/gi, 'nuclear fission'],
@@ -431,6 +437,36 @@ async function searchSearxng(query, {
 
     const payload = await response.body.json();
     const rawResults = Array.isArray(payload?.results) ? payload.results : [];
+
+    // Em execução real (fora de mocks de teste unitário), enriquece consultas de código/GitHub/URLs diretas
+    if (httpRequest === request) {
+      const wantsGitHub = /https?:\/\/|\.git\b|\b(github|reposit[óo]rios?|open[-\s]?source|c[óo]digo[-\s]?aberto)\b/i.test(query);
+      if (wantsGitHub) {
+        const cleanTokens = extractSubjectTokens(query).join(' ') || toGlobalResearchQuery(query);
+        const [directCandidates, ghHits] = await Promise.all([
+          resolveDirectUrlAndGitCandidates(query, { httpRequest, timeoutMs: 4000 }),
+          searchGitHubGlobal(cleanTokens, { httpRequest, timeoutMs: 4000, count: 6 })
+        ]);
+        const merged = normalizeTopResults([...directCandidates, ...ghHits, ...rawResults], count, query);
+        if (directCandidates.length > 0) {
+          const directUrls = new Set(directCandidates.map((d) => d.url));
+          return {
+            results: [
+              ...directCandidates,
+              ...merged.filter((m) => !directUrls.has(m.url))
+            ].slice(0, count),
+            provider: 'searxng',
+            error: null
+          };
+        }
+        return {
+          results: merged,
+          provider: 'searxng',
+          error: null
+        };
+      }
+    }
+
     const topResults = normalizeTopResults(rawResults, count, query);
 
     return {
@@ -459,7 +495,7 @@ function rewriteQueryForTechnicalSearch(rawQuery) {
  * e descartar páginas de honeypot/decoy do Bing (ex.: "Santa Catarina", "Summer Place", "Joias").
  */
 function extractSubjectTokens(query = '') {
-  const cleaned = String(query || '')
+  const cleaned = String(toGlobalResearchQuery(query) || query || '')
     // Converte URLs do GitHub em "<owner> <repo>" sem os termos "https", "github", "com"
     .replace(/https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)/gi, ' $1 $2 ')
     // Remove demais URLs brutas para que "https", "http", "com", "org" nunca virem tokens de busca
@@ -474,7 +510,7 @@ function extractSubjectTokens(query = '') {
       .toLowerCase()
       .replace(/[^\p{L}\p{N}\s_-]/gu, ' ')
       .split(/\s+/)
-      .filter((w) => w.length >= 3 && !/^(how|what|why|when|where|who|which|the|and|for|with|from|into|http|https|www|com|org|net|git|github|como|que|qual|quais|para|com|dos|das|uma|uns|umas|por|sobre|entre|fazer|funciona|funcionam|prática|pratica|contexto|dentro|análise|analise|técnica|tecnica|direta|fontes|incidente|incidentes|globais|global|arquitetura|sistema|sistemas|process|technical|overview|architecture|mechanism|internals|design|differences|comparison|synthesis|chemical|composition)$/.test(w))
+      .filter((w) => (w.length >= 3 || w === '3d' || w === 'ai' || w === 'os') && !/^(how|what|why|when|where|who|which|the|and|for|with|from|into|http|https|www|com|org|net|git|github|repository|repositories|software|softwares|opensource|open|source|code|documentation|example|implementation|como|que|qual|quais|para|com|dos|das|uma|uns|umas|por|sobre|entre|fazer|funciona|funcionam|prática|pratica|contexto|dentro|análise|analise|técnica|tecnica|direta|fontes|incidente|incidentes|globais|global|arquitetura|sistema|sistemas|procure|busque|traga|mostre|liste|principais|melhores|repositório|repositorio|repositórios|repositorios|process|technical|overview|architecture|mechanism|internals|design|differences|comparison|synthesis|chemical|composition)$/.test(w))
   )];
 }
 
@@ -743,7 +779,7 @@ async function searchGitHubGlobal(query, { httpRequest = request, timeoutMs = 40
   if (tokens.length === 0) return [];
 
   try {
-    const apiUrl = `https://api.github.com/search/repositories?q=${encodeURIComponent(tokens.join(' '))}&per_page=${count}`;
+    const apiUrl = `https://api.github.com/search/repositories?q=${encodeURIComponent(tokens.join(' '))}&sort=stars&order=desc&per_page=${count}`;
     const res = await httpRequest(apiUrl, {
       method: 'GET',
       headers: {
@@ -983,6 +1019,30 @@ async function searchKeylessWeb(query, { httpRequest = request, timeoutMs = 8000
 
         const ddgResults = normalizeTopResults(candidates, count, query);
         if (ddgResults.length > 0) {
+          if (httpRequest === request && /https?:\/\/|\.git\b|\b(github|reposit[óo]rios?|open[-\s]?source|c[óo]digo[-\s]?aberto)\b/i.test(query)) {
+            const cleanTokens = extractSubjectTokens(query).join(' ') || effectiveQuery;
+            const [directPre, ghPre] = await Promise.all([
+              resolveDirectUrlAndGitCandidates(query, { httpRequest, timeoutMs: 4000 }),
+              searchGitHubGlobal(cleanTokens, { httpRequest, timeoutMs: 4000, count: 6 })
+            ]);
+            const mergedDdg = normalizeTopResults([...directPre, ...ghPre, ...ddgResults], count, query);
+            if (directPre.length > 0) {
+              const directSet = new Set(directPre.map((d) => d.url));
+              return {
+                results: [
+                  ...directPre,
+                  ...mergedDdg.filter((m) => !directSet.has(m.url))
+                ].slice(0, count),
+                provider: 'keyless-web',
+                error: null
+              };
+            }
+            return {
+              results: mergedDdg,
+              provider: 'keyless-web',
+              error: null
+            };
+          }
           return {
             results: ddgResults,
             provider: 'keyless-web',

@@ -1,7 +1,13 @@
 {
-  "name": "perplexity-local-engine",
-  "version": "1.0.0",
-  "description": "Mecanismo de respostas pessoal local estilo Perplexity com Node, Express, htmx, Brave Search, Readability, SQLite e Streaming SSE",
+  "name": "deepevil",
+  "version": "1.2.0",
+  "description": "DeepEvil — Worldwide Research & Local AI Answer Engine powered by Ollama (IBM Granite 4.2 Uncensored 32K), Global Federation (ArXiv, OpenAlex, Wikipedia EN, GitHub, HN), Mozilla Readability, SQLite WAL and Qdrant Vector DB",
+  "author": "Erik Tonon",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/eriktonon/deepevil.git"
+  },
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",

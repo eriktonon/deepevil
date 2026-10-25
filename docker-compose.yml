@@ -28,7 +28,9 @@ services:
       - BRAVE_SEARCH_API_KEY=${BRAVE_SEARCH_API_KEY:-}
       - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-granite4.2:latest}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-eriktonon/granite4.2-uncensored:latest}
+      - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-32768}
+      - MAX_CHARS_PER_SOURCE=${MAX_CHARS_PER_SOURCE:-5500}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
     volumes:

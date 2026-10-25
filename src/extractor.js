@@ -21,7 +21,7 @@ try {
 } catch (_) {}
 
 const DEFAULT_TIMEOUT_MS = 8000;
-const DEFAULT_MAX_CHARS = 4500;
+const DEFAULT_MAX_CHARS = 5500;
 const MAX_HTML_BYTES = 2 * 1024 * 1024; // 2 MB limite de segurança para parsing DOM
 const MIN_READABLE_CHARS = 80;
 

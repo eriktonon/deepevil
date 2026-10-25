@@ -21,6 +21,7 @@ const {
 const { extractReadablePage, extractTopSources, buildSnippetFallbackSource } = require('../src/extractor');
 const { projectVectorToDim, embedTextSemantic } = require('../src/qdrant');
 const {
+  resolveLlmConfig,
   buildConversationMessages,
   sanitizeCitations,
   streamAnswer
@@ -1099,6 +1100,39 @@ test('13. Global Research (Worldwide): remove limitação ao Brasil, converte te
   });
   assert.equal(abstract, 'Raft achieves consensus via leader election');
 });
+
+test('14. Granite 4.2 32K Context & Anti-Context-Bleeding: num_ctx padrão 32768 e isolamento de citações entre turnos', () => {
+  const defaultCfg = resolveLlmConfig({});
+  assert.equal(defaultCfg.provider, 'ollama');
+  assert.equal(defaultCfg.model, 'granite4.2-uncensored:latest');
+  assert.equal(defaultCfg.numCtx, 32768, 'O contexto padrão do Granite 4.2 deve ser 32768 tokens');
+
+  const priorTurns = [
+    {
+      question: 'Como funciona o Kademlia DHT?',
+      answer_markdown: 'Cada nó mantém k-buckets com k=20 e α-Limiter [1][2].'
+    }
+  ];
+  const currentSources = [
+    {
+      citationIndex: 1,
+      title: 'Iroh QUIC P2P',
+      url: 'https://github.com/n0-computer/iroh',
+      domain: 'github.com',
+      excerpt: 'Iroh establishes direct QUIC connections using NodeId public keys.'
+    }
+  ];
+
+  const messages = buildConversationMessages(priorTurns, 'Como funciona o Iroh sobre QUIC?', currentSources);
+  assert.equal(messages.length, 1, 'Deve enviar uma mensagem limpa sem poluir com turns assistant antigos');
+  assert.equal(messages[0].role, 'user');
+  assert.match(messages[0].content, /Pergunta anterior 1: "Como funciona o Kademlia DHT\?"/);
+  assert.doesNotMatch(messages[0].content, /α-Limiter \[1\]\[2\]/, 'Não deve vazar respostas antigas nem citações [1][2] do turno anterior');
+
+  const cleaned = sanitizeCitations('Controle de Concórvora e Motorres *[1][2]*', 2);
+  assert.equal(cleaned, 'Controle de Concorrência e Motores [1][2]');
+});
+
 
 
 
