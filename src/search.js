@@ -442,6 +442,26 @@ const FOCUS_MODES = {
   }
 };
 
+const SEARCH_SCOPES = {
+  global: {
+    id: 'global',
+    label: '🌍 Global (US+CN+RU+BR)'
+  },
+  external: {
+    id: 'external',
+    label: '🌐 Só Externo (US+CN+RU)'
+  },
+  brazil: {
+    id: 'brazil',
+    label: '🇧🇷 Só Brasil (PT-BR)'
+  }
+};
+
+function normalizeSearchScope(rawScope = 'global') {
+  const clean = String(rawScope || 'global').trim().toLowerCase();
+  return SEARCH_SCOPES[clean] ? clean : 'global';
+}
+
 /**
  * Enriquecimento especializado de query segundo o Focus Mode selecionado
  * (estilo Perplexity Focus / Phind / Perplexica).
@@ -636,21 +656,25 @@ async function searchSearxng(query, {
   baseUrl = DEFAULT_SEARXNG_URL,
   httpRequest = request,
   timeoutMs = 8000,
-  count = MAX_RESULTS
+  count = MAX_RESULTS,
+  searchScope = 'global'
 } = {}) {
+  const effectiveScope = normalizeSearchScope(searchScope);
   const cleanBase = String(baseUrl || DEFAULT_SEARXNG_URL).trim().replace(/\/+$/, '');
   const url = new URL(`${cleanBase}/search`);
-  const effectiveQuery = httpRequest === request ? toGlobalResearchQuery(query) : String(query || '').trim();
+  const effectiveQuery = httpRequest === request && effectiveScope !== 'brazil'
+    ? toGlobalResearchQuery(query)
+    : String(query || '').trim();
   url.searchParams.set('q', effectiveQuery);
   url.searchParams.set('format', 'json');
-  url.searchParams.set('language', 'all');
+  url.searchParams.set('language', effectiveScope === 'brazil' ? 'pt-BR' : 'all');
 
   try {
     const response = await httpRequest(url.toString(), {
       method: 'GET',
       headers: {
         'Accept': 'application/json',
-        'Accept-Language': GLOBAL_ACCEPT_LANGUAGE,
+        'Accept-Language': effectiveScope === 'brazil' ? 'pt-BR,pt;q=0.9,en;q=0.7' : GLOBAL_ACCEPT_LANGUAGE,
         'User-Agent': 'PerplexityLocal/1.0 (Global Research Engine)'
       },
       headersTimeout: timeoutMs,
@@ -668,13 +692,14 @@ async function searchSearxng(query, {
     const payload = await response.body.json();
     const rawResults = Array.isArray(payload?.results) ? payload.results : [];
 
-    // Em execução real (fora de mocks de teste unitário), executa a Federação Multi-Polo (🇺🇸 US + 🇨🇳 CN + 🇷🇺 RU)
-    if (httpRequest === request && !isExplicitBrazilQuery(query)) {
+    // Em execução real (fora de mocks de teste unitário), executa a Federação conforme o searchScope selecionado
+    if (httpRequest === request) {
       const multiPolarResults = await collectMultiPolarFederation(query, {
         httpRequest,
         timeoutMs,
         extraRawResults: rawResults,
-        totalCount: MULTI_POLAR_RESULTS_COUNT
+        totalCount: MULTI_POLAR_RESULTS_COUNT,
+        searchScope: effectiveScope
       });
       if (multiPolarResults.length > 0) {
         return {
@@ -1055,7 +1080,8 @@ function selectMultiPolarTopResults({
   ruPool = [],
   brPool = [],
   globalPool = []
-} = {}, totalCount = MULTI_POLAR_RESULTS_COUNT, query = '') {
+} = {}, totalCount = MULTI_POLAR_RESULTS_COUNT, query = '', searchScope = 'global') {
+  const effectiveScope = normalizeSearchScope(searchScope);
   const seenUrls = new Set();
   const finalResults = [];
 
@@ -1063,6 +1089,9 @@ function selectMultiPolarTopResults({
     if (!item || typeof item.url !== 'string') return false;
     if (allowPortuguesePole || item.countryPole === 'BR') {
       if (isLowSignalResult(item)) return false;
+    } else if (effectiveScope === 'external') {
+      // No modo 'external' (Só Externo), bloqueia 100% de resultados PT/BR mesmo se a query mencionar Brasil
+      if (isPortugueseOrBrazilianBubbleResult(item, '')) return false;
     } else if (isPortugueseOrBrazilianBubbleResult(item, query)) {
       return false;
     }
@@ -1093,20 +1122,46 @@ function selectMultiPolarTopResults({
     };
   };
 
+  // Modo 100% Brasil / Português ('brazil'): retorna apenas fontes do polo BR e candidatos diretos
+  if (effectiveScope === 'brazil') {
+    for (const d of directCandidates) {
+      if (finalResults.length >= totalCount) break;
+      const tagged = withPoleBadge(d, '[🇧🇷 BR]', 'BR');
+      if (canAccept(tagged, true)) {
+        finalResults.push(tagged);
+      }
+    }
+    const brOnlyQueue = brPool.filter((x) => !isLowSignalResult(x)).map((x) => withPoleBadge(x, '[🇧🇷 BR]', 'BR'));
+    for (const b of brOnlyQueue) {
+      if (finalResults.length >= totalCount) break;
+      if (canAccept(b, true)) {
+        finalResults.push(b);
+      }
+    }
+    return finalResults.slice(0, totalCount);
+  }
+
   for (const d of directCandidates) {
     if (finalResults.length >= totalCount) break;
-    if (canAccept(d, d.countryPole === 'BR')) {
+    if (effectiveScope === 'external' && d.countryPole === 'BR') continue;
+    if (canAccept(d, d.countryPole === 'BR' && effectiveScope !== 'external')) {
       finalResults.push(d);
     }
   }
 
-  const usQueue = usPool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, query)).map((x) => withPoleBadge(x, '[🇺🇸 US]', 'US'));
-  const cnQueue = cnPool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, query)).map((x) => withPoleBadge(x, '[🇨🇳 CN]', 'CN'));
-  const ruQueue = ruPool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, query)).map((x) => withPoleBadge(x, '[🇷🇺 RU]', 'RU'));
-  const brQueue = brPool.filter((x) => !isLowSignalResult(x)).map((x) => withPoleBadge(x, '[🇧🇷 BR]', 'BR'));
-  const glQueue = globalPool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, query)).map((x) => withPoleBadge(x, '[🌍 GLOBAL]', 'GLOBAL'));
+  const filterCheckQuery = effectiveScope === 'external' ? '' : query;
+  const usQueue = usPool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, filterCheckQuery)).map((x) => withPoleBadge(x, '[🇺🇸 US]', 'US'));
+  const cnQueue = cnPool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, filterCheckQuery)).map((x) => withPoleBadge(x, '[🇨🇳 CN]', 'CN'));
+  const ruQueue = ruPool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, filterCheckQuery)).map((x) => withPoleBadge(x, '[🇷🇺 RU]', 'RU'));
+  // No modo 'external' (Só Externo), desativa completamente a fila BR
+  const brQueue = effectiveScope === 'external'
+    ? []
+    : brPool.filter((x) => !isLowSignalResult(x)).map((x) => withPoleBadge(x, '[🇧🇷 BR]', 'BR'));
+  const glQueue = globalPool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, filterCheckQuery)).map((x) => withPoleBadge(x, '[🌍 GLOBAL]', 'GLOBAL'));
 
-  // Intercala em round-robin estrito nos 4 polos: 🇺🇸 US -> 🇨🇳 CN -> 🇷🇺 RU -> 🇧🇷 BR
+  // Intercala em round-robin estrito:
+  // - 'global':   🇺🇸 US -> 🇨🇳 CN -> 🇷🇺 RU -> 🇧🇷 BR (4 Polos Balanceados)
+  // - 'external': 🇺🇸 US -> 🇨🇳 CN -> 🇷🇺 RU (3 Polos Internacionais, 0% Brasil)
   let cursor = 0;
   const maxCursor = Math.max(usQueue.length, cnQueue.length, ruQueue.length, brQueue.length, glQueue.length);
   while (finalResults.length < totalCount && cursor < maxCursor) {
@@ -1136,18 +1191,58 @@ function selectMultiPolarTopResults({
 }
 
 /**
- * Executa a Federação Geopolítica Multi-Polo em paralelo:
- * Coleta candidatos dos 4 polos (🇺🇸 Estados Unidos, 🇨🇳 China, 🇷🇺 Rússia e 🇧🇷 Brasil/Português)
- * e seleciona um conjunto balanceado com alta autoridade técnica e acadêmica.
+ * Executa a Federação Geopolítica Multi-Polo em paralelo respeitando o `searchScope`:
+ * - `global`:   4 polos balanceados (🇺🇸 US + 🇨🇳 CN + 🇷🇺 RU + 🇧🇷 BR)
+ * - `external`: 3 polos internacionais (🇺🇸 US + 🇨🇳 CN + 🇷🇺 RU, zero Brasil/PT)
+ * - `brazil`:   100% Brasil / Português Técnico & Acadêmico (🇧🇷 BR: Wikipedia PT + OpenAlex BR + Bing/DDG PT-BR)
  */
 async function collectMultiPolarFederation(query, {
   httpRequest = request,
   timeoutMs = 5000,
   extraRawResults = [],
-  totalCount = MULTI_POLAR_RESULTS_COUNT
+  totalCount = MULTI_POLAR_RESULTS_COUNT,
+  searchScope = 'global'
 } = {}) {
+  const effectiveScope = normalizeSearchScope(searchScope);
   const poles = buildMultiPolarQueries(query);
   const wantsGitHub = /https?:\/\/|\.git\b|\b(github|reposit[óo]rios?|open[-\s]?source|c[óo]digo[-\s]?aberto)\b/i.test(query);
+
+  const interleaveArrays = (...arrays) => {
+    const out = [];
+    const maxLen = Math.max(0, ...arrays.map((a) => (Array.isArray(a) ? a.length : 0)));
+    for (let i = 0; i < maxLen; i++) {
+      for (const arr of arrays) {
+        if (Array.isArray(arr) && arr[i]) {
+          out.push(arr[i]);
+        }
+      }
+    }
+    return out;
+  };
+
+  // Modo 'brazil' (Só Brasil / PT-BR): coleta dedicada 100% em Português e instituições brasileiras
+  if (effectiveScope === 'brazil') {
+    const [directCandidates, brWiki, brOpenAlex, brBing] = await Promise.all([
+      resolveDirectUrlAndGitCandidates(query, { httpRequest, timeoutMs: 4000 }),
+      searchWikipediaByLang(poles.brWiki, 'pt', { httpRequest, timeoutMs: 4500, count: 4, countryPole: 'BR', countryBadge: '[🇧🇷 BR]' }),
+      searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 4500, count: 4, countryCode: 'BR', countryPole: 'BR', countryBadge: '[🇧🇷 BR]' }),
+      searchBingHtml(poles.br, { httpRequest, timeoutMs: 4500, count: 4, searchScope: 'brazil' })
+    ]);
+    const brExtra = (extraRawResults || []).filter((item) => !isLowSignalResult(item));
+    const brPool = interleaveArrays(brWiki, brOpenAlex, [...brBing, ...brExtra]).slice(0, 12);
+
+    return selectMultiPolarTopResults(
+      {
+        directCandidates,
+        brPool
+      },
+      totalCount,
+      query,
+      'brazil'
+    );
+  }
+
+  const includeBrPole = effectiveScope !== 'external';
 
   const [
     directCandidates,
@@ -1165,7 +1260,7 @@ async function collectMultiPolarFederation(query, {
     ruHabr,
     ruOpenAlex,
     ruWiki,
-    // 🇧🇷 Polo Brasil / Português Técnico & Acadêmico (Wikipedia PT + OpenAlex Brasil)
+    // 🇧🇷 Polo Brasil / Português Técnico & Acadêmico (Wikipedia PT + OpenAlex Brasil — apenas quando includeBrPole=true)
     brWiki,
     brOpenAlex
   ] = await Promise.all([
@@ -1175,7 +1270,7 @@ async function collectMultiPolarFederation(query, {
     searchHackerNewsGlobal(poles.enCore, { httpRequest, timeoutMs: 4000, count: 2 }),
     searchArxivGlobal(poles.academicCore, { httpRequest, timeoutMs: 4500, count: 2 }),
     searchWikipediaByLang(poles.enCore, 'en', { httpRequest, timeoutMs: 4000, count: 2, countryPole: 'US', countryBadge: '[🇺🇸 US]' }),
-    searchBingHtml(poles.us, { httpRequest, timeoutMs: 4500, count: 3 }),
+    searchBingHtml(poles.us, { httpRequest, timeoutMs: 4500, count: 3, searchScope: 'external' }),
     // China Pole
     searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 4500, count: 4, countryCode: 'CN', countryPole: 'CN', countryBadge: '[🇨🇳 CN]' }),
     searchWikipediaByLang(poles.cnWiki, 'zh', { httpRequest, timeoutMs: 4000, count: 3, countryPole: 'CN', countryBadge: '[🇨🇳 CN]' }),
@@ -1185,25 +1280,18 @@ async function collectMultiPolarFederation(query, {
     searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 4500, count: 3, countryCode: 'RU', countryPole: 'RU', countryBadge: '[🇷🇺 RU]' }),
     searchWikipediaByLang(poles.ruWiki, 'ru', { httpRequest, timeoutMs: 4000, count: 2, countryPole: 'RU', countryBadge: '[🇷🇺 RU]' }),
     // Brazil / Portuguese Pole
-    searchWikipediaByLang(poles.brWiki, 'pt', { httpRequest, timeoutMs: 4000, count: 3, countryPole: 'BR', countryBadge: '[🇧🇷 BR]' }),
-    searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 4500, count: 3, countryCode: 'BR', countryPole: 'BR', countryBadge: '[🇧🇷 BR]' })
+    includeBrPole
+      ? searchWikipediaByLang(poles.brWiki, 'pt', { httpRequest, timeoutMs: 4000, count: 3, countryPole: 'BR', countryBadge: '[🇧🇷 BR]' })
+      : Promise.resolve([]),
+    includeBrPole
+      ? searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 4500, count: 3, countryCode: 'BR', countryPole: 'BR', countryBadge: '[🇧🇷 BR]' })
+      : Promise.resolve([])
   ]);
 
   const cleanExtra = (extraRawResults || []).filter((item) => !isPortugueseOrBrazilianBubbleResult(item, query));
-  const brExtra = (extraRawResults || []).filter((item) => isPortugueseOrBrazilianBubbleResult(item, query) && !isLowSignalResult(item));
-
-  const interleaveArrays = (...arrays) => {
-    const out = [];
-    const maxLen = Math.max(0, ...arrays.map((a) => (Array.isArray(a) ? a.length : 0)));
-    for (let i = 0; i < maxLen; i++) {
-      for (const arr of arrays) {
-        if (Array.isArray(arr) && arr[i]) {
-          out.push(arr[i]);
-        }
-      }
-    }
-    return out;
-  };
+  const brExtra = includeBrPole
+    ? (extraRawResults || []).filter((item) => isPortugueseOrBrazilianBubbleResult(item, query) && !isLowSignalResult(item))
+    : [];
 
   // Intercala dentro de cada polo (Web/Enciclopédia + Paper Acadêmico do País + Engenharia/Código)
   const usPool = interleaveArrays(
@@ -1224,11 +1312,9 @@ async function collectMultiPolarFederation(query, {
     ruWiki
   ).slice(0, 6);
 
-  const brPool = interleaveArrays(
-    brWiki,
-    brOpenAlex,
-    brExtra
-  ).slice(0, 6);
+  const brPool = includeBrPole
+    ? interleaveArrays(brWiki, brOpenAlex, brExtra).slice(0, 6)
+    : [];
 
   return selectMultiPolarTopResults(
     {
@@ -1240,7 +1326,8 @@ async function collectMultiPolarFederation(query, {
       globalPool: [...cnGitHub, ...usArxiv]
     },
     totalCount,
-    query
+    query,
+    effectiveScope
   );
 }
 
@@ -1364,12 +1451,17 @@ async function searchGitHubGlobal(query, { httpRequest = request, timeoutMs = 40
  * Busca web via Bing Global HTML (`adlt=off`, `ensearch=1`, `setmkt=en-US`, `setlang=en-US`)
  * sem limitação geográfica ao Brasil, decodificando links `u=a1<base64url>` e filtrando páginas de honeypot.
  */
-async function searchBingHtml(query, { httpRequest = request, timeoutMs = 8000, count = MAX_RESULTS, subjectContext = '' } = {}) {
-  const effectiveQuery = toGlobalResearchQuery(query);
+async function searchBingHtml(query, { httpRequest = request, timeoutMs = 8000, count = MAX_RESULTS, subjectContext = '', searchScope = 'global' } = {}) {
+  const effectiveScope = normalizeSearchScope(searchScope);
+  const isBrazilMode = effectiveScope === 'brazil' || (effectiveScope !== 'external' && isExplicitBrazilQuery(query));
+  const effectiveQuery = isBrazilMode ? String(query || '').trim() : toGlobalResearchQuery(query);
   const url = new URL(BING_HTML_ENDPOINT);
   url.searchParams.set('q', effectiveQuery);
   url.searchParams.set('adlt', 'off');
-  if (!isExplicitBrazilQuery(query)) {
+  if (isBrazilMode) {
+    url.searchParams.set('setmkt', 'pt-BR');
+    url.searchParams.set('setlang', 'pt-BR');
+  } else {
     url.searchParams.set('ensearch', '1');
     url.searchParams.set('setmkt', 'en-US');
     url.searchParams.set('setlang', 'en-US');
@@ -1381,8 +1473,8 @@ async function searchBingHtml(query, { httpRequest = request, timeoutMs = 8000, 
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': GLOBAL_ACCEPT_LANGUAGE,
-        'Cookie': 'SRCHHPGUSR=ADLT=OFF&NRSLT=10&_EDGE_S=mkt=en-us'
+        'Accept-Language': isBrazilMode ? 'pt-BR,pt;q=0.9,en;q=0.7' : GLOBAL_ACCEPT_LANGUAGE,
+        'Cookie': isBrazilMode ? 'SRCHHPGUSR=ADLT=OFF&NRSLT=10&_EDGE_S=mkt=pt-br' : 'SRCHHPGUSR=ADLT=OFF&NRSLT=10&_EDGE_S=mkt=en-us'
       },
       headersTimeout: timeoutMs,
       bodyTimeout: timeoutMs
@@ -1434,11 +1526,12 @@ async function searchBingHtml(query, { httpRequest = request, timeoutMs = 8000, 
       candidates.push({
         url: resolvedUrl,
         title,
-        description
+        description,
+        ...(isBrazilMode ? { countryPole: 'BR' } : {})
       });
     }
 
-    return normalizeTopResults(candidates, count, `${query} ${subjectContext}`);
+    return normalizeTopResults(candidates, count, isBrazilMode ? '' : `${query} ${subjectContext}`);
   } catch (_) {
     return [];
   }
@@ -1513,23 +1606,25 @@ async function searchWikipediaFallback(query, { httpRequest = request, timeoutMs
  * Federação Geopolítica Paralela 🇺🇸 US + 🇨🇳 China + 🇷🇺 Rússia),
  * 100% livre de trava regional no Brasil e protegida contra honeypot.
  */
-async function searchKeylessWeb(query, { httpRequest = request, timeoutMs = 8000, count = MAX_RESULTS } = {}) {
-  const effectiveQuery = toGlobalResearchQuery(query);
+async function searchKeylessWeb(query, { httpRequest = request, timeoutMs = 8000, count = MAX_RESULTS, searchScope = 'global' } = {}) {
+  const effectiveScope = normalizeSearchScope(searchScope);
+  const isBrazilMode = effectiveScope === 'brazil' || (effectiveScope !== 'external' && isExplicitBrazilQuery(query));
+  const effectiveQuery = isBrazilMode ? String(query || '').trim() : toGlobalResearchQuery(query);
   const url = new URL(DUCKDUCKGO_HTML_ENDPOINT);
   url.searchParams.set('q', effectiveQuery);
-  url.searchParams.set('kl', isExplicitBrazilQuery(query) ? 'br-pt' : 'wt-wt');
+  url.searchParams.set('kl', isBrazilMode ? 'br-pt' : 'wt-wt');
   url.searchParams.set('kp', '-2');
 
   let lastError = null;
   let ddgCandidates = [];
 
-  // 1. Tenta DuckDuckGo HTML Worldwide (kl=wt-wt)
+  // 1. Tenta DuckDuckGo HTML
   try {
     const response = await httpRequest(url.toString(), {
       method: 'GET',
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36',
-        'Accept-Language': GLOBAL_ACCEPT_LANGUAGE
+        'Accept-Language': isBrazilMode ? 'pt-BR,pt;q=0.9,en;q=0.7' : GLOBAL_ACCEPT_LANGUAGE
       },
       headersTimeout: timeoutMs,
       bodyTimeout: timeoutMs
@@ -1562,13 +1657,14 @@ async function searchKeylessWeb(query, { httpRequest = request, timeoutMs = 8000
           candidates.push({
             url: resolvedUrl,
             title: String(a.textContent || '').trim(),
-            description: String(snippetEl?.textContent || '').trim()
+            description: String(snippetEl?.textContent || '').trim(),
+            ...(isBrazilMode ? { countryPole: 'BR' } : {})
           });
         }
 
-        ddgCandidates = normalizeTopResults(candidates, count, query);
-        // Se for um mock de teste unitário (httpRequest !== request) ou consulta explícita do Brasil, retorna direto
-        if (ddgCandidates.length > 0 && (httpRequest !== request || isExplicitBrazilQuery(query))) {
+        ddgCandidates = normalizeTopResults(candidates, count, isBrazilMode ? '' : query);
+        // Se for um mock de teste unitário (httpRequest !== request), retorna direto
+        if (ddgCandidates.length > 0 && httpRequest !== request) {
           return {
             results: ddgCandidates,
             provider: 'keyless-web',
@@ -1588,7 +1684,7 @@ async function searchKeylessWeb(query, { httpRequest = request, timeoutMs = 8000
 
   // Se httpRequest foi injetado por um teste unitário, mantém o fluxo determinístico enxuto (Bing -> Wikipedia)
   if (httpRequest !== request) {
-    const bingResults = await searchBingHtml(query, { httpRequest, timeoutMs, count });
+    const bingResults = await searchBingHtml(query, { httpRequest, timeoutMs, count, searchScope: effectiveScope });
     const wikiResults = bingResults.length >= count
       ? []
       : await searchWikipediaFallback(query, { httpRequest, timeoutMs, count });
@@ -1600,12 +1696,13 @@ async function searchKeylessWeb(query, { httpRequest = request, timeoutMs = 8000
     };
   }
 
-  // 2. Em execução real: Federação Geopolítica Multi-Polo (6 🇺🇸 US + 6 🇨🇳 CN + 6 🇷🇺 RU) em paralelo!
+  // 2. Em execução real: Federação Geopolítica Multi-Polo conforme o searchScope ('global', 'external' ou 'brazil')
   const multiPolarResults = await collectMultiPolarFederation(query, {
     httpRequest,
     timeoutMs,
     extraRawResults: ddgCandidates,
-    totalCount: MULTI_POLAR_RESULTS_COUNT
+    totalCount: MULTI_POLAR_RESULTS_COUNT,
+    searchScope: effectiveScope
   });
 
   if (multiPolarResults.length > 0) {
@@ -1626,12 +1723,13 @@ async function searchKeylessWeb(query, { httpRequest = request, timeoutMs = 8000
 /**
  * Executa a busca web Global Multi-Polo obtendo os principais resultados via undici.
  * Suporta:
- * 1) SearXNG (`SEARCH_PROVIDER=searxng` / `SEARXNG_URL=http://127.0.0.1:8888`) + Federação Multi-Polo (US, CN, RU).
- * 2) Brave Search API (`BRAVE_SEARCH_API_KEY`) — country=ALL.
- * 3) Fallback automático Multi-Polo via DuckDuckGo Worldwide (`kl=wt-wt`) + Federação Geopolítica (🇺🇸 US, 🇨🇳 China, 🇷🇺 Rússia).
+ * 1) SearXNG (`SEARCH_PROVIDER=searxng` / `SEARXNG_URL=http://127.0.0.1:8888`) + Federação Multi-Polo.
+ * 2) Brave Search API (`BRAVE_SEARCH_API_KEY`).
+ * 3) Fallback automático Multi-Polo via DuckDuckGo + Federação Geopolítica (`global`, `external`, `brazil`).
  */
 async function searchBrave(query, options = {}) {
   const env = options.env || process.env;
+  const searchScope = normalizeSearchScope(options.searchScope || env.SEARCH_SCOPE || 'global');
   const effectiveQuery = options.focusMode
     ? applyFocusModeToQuery(query, options.focusMode)
     : String(query || '').trim();
@@ -1655,13 +1753,14 @@ async function searchBrave(query, options = {}) {
       baseUrl: searxngUrl,
       httpRequest,
       timeoutMs,
-      count
+      count,
+      searchScope
     });
     if (searxRes.results.length > 0 || options.disableKeylessFallback) {
       return searxRes;
     }
     // Se o container SearXNG local estiver desligado, faz fallback transparente para busca web global multi-polo
-    return searchKeylessWeb(effectiveQuery, { httpRequest, timeoutMs, count });
+    return searchKeylessWeb(effectiveQuery, { httpRequest, timeoutMs, count, searchScope });
   }
 
   // 2. Se não há chave Brave válida, tenta SearXNG local primeiro e depois busca Global Keyless Multi-Polo
@@ -1678,18 +1777,19 @@ async function searchBrave(query, options = {}) {
         baseUrl: searxngUrl,
         httpRequest,
         timeoutMs,
-        count
+        count,
+        searchScope
       });
       if (searxRes.results.length > 0) return searxRes;
     }
-    return searchKeylessWeb(effectiveQuery, { httpRequest, timeoutMs, count });
+    return searchKeylessWeb(effectiveQuery, { httpRequest, timeoutMs, count, searchScope });
   }
 
-  // 3. Brave Search API Oficial em modo Global (country=ALL)
+  // 3. Brave Search API Oficial
   const url = new URL(BRAVE_ENDPOINT);
-  url.searchParams.set('q', toGlobalResearchQuery(effectiveQuery));
+  url.searchParams.set('q', searchScope === 'brazil' ? effectiveQuery : toGlobalResearchQuery(effectiveQuery));
   url.searchParams.set('count', String(Math.min(Math.max(count, 1), 20)));
-  url.searchParams.set('country', 'ALL');
+  url.searchParams.set('country', searchScope === 'brazil' ? 'BR' : 'ALL');
   url.searchParams.set('text_decorations', 'false');
 
   try {
@@ -1740,10 +1840,13 @@ module.exports = {
   MAX_RESULTS,
   MULTI_POLAR_RESULTS_COUNT,
   FOCUS_MODES,
+  SEARCH_SCOPES,
+  normalizeSearchScope,
   LOW_SIGNAL_DOMAINS,
   HIGH_SIGNAL_DOMAINS,
   isExplicitBrazilQuery,
   isPortugueseOrBrazilianBubbleResult,
+  isLowSignalResult,
   toGlobalResearchQuery,
   buildMultiPolarQueries,
   scoreResultCoherence,

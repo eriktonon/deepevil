@@ -1206,6 +1206,43 @@ test('15. Federação Geopolítica Multi-Polo (🇺🇸 US + 🇨🇳 China + �
   assert.match(selected[1].title, /^\[🇨🇳 CN\]/);
   assert.match(selected[2].title, /^\[🇷🇺 RU\]/);
   assert.match(selected[3].title, /^\[🇧🇷 BR\]/);
+
+  // Escopo 'external' (🌐 Só Externo): 0% Brasil/PT mesmo se houver itens no brPool
+  const externalOnly = selectMultiPolarTopResults({
+    usPool: [
+      { url: 'https://arxiv.org/abs/2501.00001', title: 'SWE-bench Verified US' },
+      { url: 'https://en.wikipedia.org/wiki/Large_language_model', title: 'LLM US' },
+      { url: 'https://livebench.ai/leaderboard', title: 'LiveBench US' }
+    ],
+    cnPool: [
+      { url: 'https://opencompass.org.cn/leaderboard-llm', title: 'OpenCompass CN' },
+      { url: 'https://zh.wikipedia.org/wiki/DeepSeek-V3', title: 'DeepSeek-V3 CN' },
+      { url: 'https://github.com/QwenLM/Qwen2.5-Coder', title: 'Qwen2.5-Coder CN' }
+    ],
+    ruPool: [
+      { url: 'https://habr.com/ru/articles/1021388/', title: 'Habr LLM Benchmark RU' },
+      { url: 'https://mera.a-ai.ru/ru/leaderboard', title: 'MERA Benchmark RU' },
+      { url: 'https://ru.wikipedia.org/wiki/Большая_языковая_модель', title: 'LLM Wiki RU' }
+    ],
+    brPool: [
+      { url: 'https://pt.wikipedia.org/wiki/Grande_modelo_de_linguagem', title: 'Grande modelo de linguagem — Wikipedia (PT)' }
+    ]
+  }, 9, q, 'external');
+  assert.equal(externalOnly.length, 9);
+  assert.ok(externalOnly.every((s) => !s.title.startsWith('[🇧🇷 BR]')), 'No modo external nenhuma fonte BR deve entrar');
+
+  // Escopo 'brazil' (🇧🇷 Só Brasil): 100% Brasil/PT de alta autoridade (bloqueando brasilescola)
+  const brazilOnly = selectMultiPolarTopResults({
+    usPool: [{ url: 'https://arxiv.org/abs/2501.00001', title: 'US Paper' }],
+    brPool: [
+      { url: 'https://brasilescola.uol.com.br/informatica/ia.htm', title: 'Site escolar raso bloqueado' },
+      { url: 'https://pt.wikipedia.org/wiki/Grande_modelo_de_linguagem', title: 'Grande modelo de linguagem — Wikipedia (PT)' },
+      { url: 'https://scielo.br/j/ea/a/ia-generativa-usp', title: 'Modelos de Linguagem e Engenharia de Software — USP' }
+    ]
+  }, 9, q, 'brazil');
+  assert.equal(brazilOnly.length, 2);
+  assert.ok(brazilOnly.every((s) => s.title.startsWith('[🇧🇷 BR]')), 'No modo brazil todas as fontes devem ser do polo BR');
+  assert.ok(!brazilOnly.some((s) => s.url.includes('brasilescola')));
 });
 
 

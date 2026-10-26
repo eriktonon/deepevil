@@ -470,12 +470,14 @@ function createApp(options = {}) {
     res.send(doc);
   });
 
-  // Submeter pergunta (inicial ou follow-up mantendo contexto da conversa anterior, Focus Mode e LLM escolhida)
+  // Submeter pergunta (inicial ou follow-up mantendo contexto da conversa anterior, Escopo, Focus Mode e LLM escolhida)
   app.post('/ask', async (req, res) => {
     const rawQuestion = String(req.body?.question || '').trim();
     const rawConvId = String(req.body?.conversationId || '').trim();
     const selectedModel = String(req.body?.model || '').trim();
     const focusMode = String(req.body?.focusMode || 'web').trim().toLowerCase() || 'web';
+    const rawScope = String(req.body?.searchScope || 'global').trim().toLowerCase();
+    const searchScope = ['global', 'external', 'brazil'].includes(rawScope) ? rawScope : 'global';
 
     if (!rawQuestion) {
       res.status(400).type('html').send(
@@ -500,7 +502,8 @@ function createApp(options = {}) {
       searchQuery,
       provider: llmConfig.provider,
       model: llmConfig.model,
-      focusMode
+      focusMode,
+      searchScope
     });
 
     const models = await listModelsFn({ env }).catch(() => []);
@@ -510,7 +513,8 @@ function createApp(options = {}) {
     const composerOob = renderComposerForm(conversation, true, {
       models,
       activeModel: llmConfig.model,
-      activeFocus: focusMode
+      activeFocus: focusMode,
+      activeScope: searchScope
     });
     const removeHeroOob = '<div id="empty-hero" hx-swap-oob="delete"></div>';
 
@@ -693,7 +697,11 @@ function createApp(options = {}) {
             : Promise.resolve([]);
 
         const [searchOutcome, hybridLocalSources] = await Promise.all([
-          searchFn(turn.search_query, { env, focusMode: turn.focus_mode || 'web' }),
+          searchFn(turn.search_query, {
+            env,
+            focusMode: turn.focus_mode || 'web',
+            searchScope: turn.search_scope || 'global'
+          }),
           hybridPromise
         ]);
 

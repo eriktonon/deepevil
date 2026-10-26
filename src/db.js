@@ -77,11 +77,16 @@ function createDatabase(customDbPath) {
     CREATE INDEX IF NOT EXISTS idx_sources_turn_id ON sources(turn_id);
   `);
 
-  // Migração segura para focus_mode em bancos SQLite já existentes
+  // Migração segura para focus_mode e search_scope em bancos SQLite já existentes
   try {
     db.exec(`ALTER TABLE turns ADD COLUMN focus_mode TEXT NOT NULL DEFAULT 'web'`);
   } catch (_) {
     // Coluna focus_mode já existe
+  }
+  try {
+    db.exec(`ALTER TABLE turns ADD COLUMN search_scope TEXT NOT NULL DEFAULT 'global'`);
+  } catch (_) {
+    // Coluna search_scope já existe
   }
 
   const stmts = {
@@ -141,9 +146,9 @@ function createDatabase(customDbPath) {
     `),
     insertTurn: db.prepare(`
       INSERT INTO turns (
-        conversation_id, question, search_query, status, provider, model, focus_mode
+        conversation_id, question, search_query, status, provider, model, focus_mode, search_scope
       ) VALUES (
-        @conversationId, @question, @searchQuery, 'pending', @provider, @model, @focusMode
+        @conversationId, @question, @searchQuery, 'pending', @provider, @model, @focusMode, @searchScope
       )
     `),
     getTurn: db.prepare(`
@@ -245,15 +250,18 @@ function createDatabase(customDbPath) {
       return stmts.deleteConversation.run(Number(id)).changes > 0;
     },
 
-    createTurn({ conversationId, question, searchQuery = '', provider = '', model = '', focusMode = 'web' }) {
+    createTurn({ conversationId, question, searchQuery = '', provider = '', model = '', focusMode = 'web', searchScope = 'global' }) {
       const convId = Number(conversationId);
+      const rawScope = String(searchScope || 'global').trim().toLowerCase();
+      const validScope = ['global', 'external', 'brazil'].includes(rawScope) ? rawScope : 'global';
       const info = stmts.insertTurn.run({
         conversationId: convId,
         question: String(question).trim(),
         searchQuery: String(searchQuery || question).trim(),
         provider,
         model,
-        focusMode: String(focusMode || 'web').trim().toLowerCase()
+        focusMode: String(focusMode || 'web').trim().toLowerCase(),
+        searchScope: validScope
       });
       stmts.touchConversation.run({ id: convId });
       return stmts.getTurn.get(info.lastInsertRowid);

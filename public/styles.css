@@ -500,6 +500,16 @@ body {
   color: var(--g-green);
 }
 
+.turn-scope-badge {
+  font-size: 11.5px;
+  font-family: var(--font-mono);
+  padding: 2px 8px;
+  border-radius: 999px;
+  background-color: rgba(251, 188, 5, 0.12);
+  border: 1px solid rgba(251, 188, 5, 0.4);
+  color: var(--g-yellow);
+}
+
 .turn-search-query {
   font-size: 12px;
   font-family: var(--font-mono);
@@ -1414,7 +1424,8 @@ body {
   }
 }
 
-/* Seletor de Modo de Foco e Seletor de LLM (Ollama) na Barra do Google */
+/* Seletor de Escopo Geográfico, Modo de Foco e Seletor de LLM (Ollama) na Barra do Google */
+.scope-selector-wrap,
 .focus-selector-wrap,
 .model-selector-wrap {
   display: inline-flex;
@@ -1422,6 +1433,7 @@ body {
   flex-shrink: 0;
 }
 
+.google-scope-select,
 .google-focus-select,
 .google-model-select {
   background-color: #303134;
@@ -1435,6 +1447,18 @@ body {
   cursor: pointer;
   outline: none;
   transition: border-color 140ms ease, background-color 140ms ease;
+}
+
+.google-scope-select {
+  border-color: rgba(251, 188, 5, 0.45);
+  color: var(--g-yellow);
+  max-width: 205px;
+}
+
+.google-scope-select:hover,
+.google-scope-select:focus {
+  border-color: var(--g-yellow);
+  background-color: #38393d;
 }
 
 .google-focus-select {

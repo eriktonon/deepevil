@@ -726,12 +726,21 @@ function renderTurnCard(turn, options = {}) {
         </div>
       `;
 
+  const scopeKey = String(turn.search_scope || 'global').trim().toLowerCase();
+  const scopeLabelMap = {
+    global: '🌍 Global (US+CN+RU+BR)',
+    external: '🌐 Só Externo (US+CN+RU)',
+    brazil: '🇧🇷 Só Brasil (PT-BR)'
+  };
+  const scopeBadgeHtml = `<span class="turn-scope-badge" data-scope="${escapeHtml(scopeKey)}">${escapeHtml(scopeLabelMap[scopeKey] || scopeLabelMap.global)}</span>`;
+
   return `
     <article id="turn-${turn.id}" class="turn-card${isLive ? ' turn-card-live' : ''}" data-turn-id="${turn.id}">
       <div class="google-four-color-bar" aria-hidden="true"></div>
       <header class="turn-question-header">
         <div class="turn-question-meta">
           <span class="turn-badge">root@deepevil:~# query</span>
+          ${scopeBadgeHtml}
           ${turn.search_query && turn.search_query !== turn.question ? `<span class="turn-search-query" title="Dork contextual enviada ao motor de busca">dork="${escapeHtml(turn.search_query)}"</span>` : ''}
         </div>
         <h2 class="turn-question-title">${escapeHtml(turn.question)}</h2>
@@ -888,6 +897,16 @@ function renderComposerForm(activeConversation = null, isOob = false, options = 
             ></textarea>
           </div>
 
+          <!-- Seletor de Escopo Geográfico (Global 4 Polos / Só Externo / Só Brasil) -->
+          <div class="scope-selector-wrap" title="Filtrar escopo geográfico das fontes: Global (US+CN+RU+BR), Só Externo (US+CN+RU) ou Só Brasil (PT-BR)">
+            <label for="scope-select" class="sr-only">Escopo de Busca</label>
+            <select id="scope-select" name="searchScope" class="google-scope-select">
+              <option value="global"${options.activeScope === 'global' || !options.activeScope ? ' selected' : ''}>🌍 Global (US+CN+RU+BR)</option>
+              <option value="external"${options.activeScope === 'external' ? ' selected' : ''}>🌐 Só Externo (US+CN+RU)</option>
+              <option value="brazil"${options.activeScope === 'brazil' ? ' selected' : ''}>🇧🇷 Só Brasil (PT-BR)</option>
+            </select>
+          </div>
+
           <!-- Seletor de Modo de Foco (Web / SecOps / Code / Academic / Híbrido) -->
           <div class="focus-selector-wrap" title="Selecionar modo de foco da pesquisa">
             <label for="focus-select" class="sr-only">Modo de Foco</label>
@@ -1020,10 +1039,10 @@ function renderFullPage({ conversations = [], activeConversation = null, envStat
   <title>${escapeHtml(pageTitle)}</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=deepevil-d-5">
   <link rel="shortcut icon" href="/favicon.ico?v=deepevil-d-5">
-  <link rel="stylesheet" href="/styles.css?v=deepevil-5">
+  <link rel="stylesheet" href="/styles.css?v=deepevil-6">
   <script src="/vendor/htmx.min.js" defer></script>
   <script src="/vendor/sse.js" defer></script>
-  <script src="/app.js?v=deepevil-5" defer></script>
+  <script src="/app.js?v=deepevil-6" defer></script>
 </head>
 <body>
   <div class="app-shell">
