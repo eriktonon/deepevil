@@ -194,7 +194,11 @@ async function extractReadablePage(targetUrl, fallbackTitle = '', options = {}) 
     const excerpt = clipAtBoundary(rawText, maxChars);
     const words = excerpt.split(/\s+/).filter(Boolean);
     const domain = parsedUrl.hostname.replace(/^www\./i, '');
-    const title = String(article?.title || fallbackTitle || domain).replace(/\s+/g, ' ').trim();
+    const poleMatch = String(fallbackTitle || '').match(/^(\[(?:🇺🇸|🇨🇳|🇷🇺|🌍)[^\]]+\])\s*/);
+    const rawExtractedTitle = String(article?.title || fallbackTitle || domain).replace(/\s+/g, ' ').trim();
+    const title = poleMatch && !rawExtractedTitle.startsWith('[')
+      ? `${poleMatch[1]} ${rawExtractedTitle}`
+      : rawExtractedTitle;
     const siteName = String(article?.siteName || domain).replace(/\s+/g, ' ').trim();
 
     return {
@@ -260,7 +264,8 @@ function buildSnippetFallbackSource(item, maxChars = DEFAULT_MAX_CHARS) {
  * - Renumera sequencialmente ([1], [2], ...) APENAS as fontes obtidas com sucesso.
  */
 async function extractTopSources(searchResults = [], options = {}) {
-  const candidates = Array.isArray(searchResults) ? searchResults.slice(0, 6) : [];
+  const maxSources = Number(options.maxSources || 12);
+  const candidates = Array.isArray(searchResults) ? searchResults.slice(0, maxSources) : [];
   if (candidates.length === 0) {
     return {
       sources: [],
@@ -270,7 +275,8 @@ async function extractTopSources(searchResults = [], options = {}) {
     };
   }
 
-  const earlyCutoffCount = Number(options.earlyCutoffCount ?? 4);
+  const defaultEarlyCutoff = candidates.length > 6 ? 7 : 4;
+  const earlyCutoffCount = Number(options.earlyCutoffCount ?? defaultEarlyCutoff);
   const gracePeriodMs = Number(options.gracePeriodMs ?? 1200);
   const allowSnippetFallback = options.allowSnippetFallback !== false;
   const maxChars = Number(options.maxChars || process.env.MAX_CHARS_PER_SOURCE || DEFAULT_MAX_CHARS);

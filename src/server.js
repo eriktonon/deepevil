@@ -698,7 +698,7 @@ function createApp(options = {}) {
         ]);
 
         const searchResults = Array.isArray(searchOutcome?.results)
-          ? searchOutcome.results.slice(0, 6)
+          ? searchOutcome.results.slice(0, 12)
           : [];
 
         // ETAPA 2: Extração legível com Early-Cutoff + SERP Snippet Fallback
@@ -723,7 +723,7 @@ function createApp(options = {}) {
         const combinedSources = [...webSources];
         if (Array.isArray(hybridLocalSources) && hybridLocalSources.length > 0) {
           for (const hs of hybridLocalSources) {
-            if (combinedSources.length >= 6) break;
+            if (combinedSources.length >= 12) break;
             if (!combinedSources.some((s) => s.url === hs.url)) {
               combinedSources.push(hs);
             }

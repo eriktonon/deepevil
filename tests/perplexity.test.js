@@ -13,9 +13,12 @@ const {
   searchKeylessWeb,
   buildContextualSearchQuery,
   toGlobalResearchQuery,
+  buildMultiPolarQueries,
   isExplicitBrazilQuery,
+  isPortugueseOrBrazilianBubbleResult,
   scoreResultCoherence,
   normalizeTopResults,
+  selectMultiPolarTopResults,
   reconstructOpenAlexAbstract
 } = require('../src/search');
 const { extractReadablePage, extractTopSources, buildSnippetFallbackSource } = require('../src/extractor');
@@ -1132,6 +1135,60 @@ test('14. Granite 4.2 32K Context & Anti-Context-Bleeding: num_ctx padrão 32768
   const cleaned = sanitizeCitations('Controle de Concórvora e Motorres *[1][2]*', 2);
   assert.equal(cleaned, 'Controle de Concorrência e Motores [1][2]');
 });
+
+test('15. Federação Geopolítica Multi-Polo (🇺🇸 US + 🇨🇳 China + 🇷🇺 Rússia) e Bloqueio Anti-Bolha Geográfica (.br / /pt/)', () => {
+  const q = 'qual o modelo de IA mais forte para desenvolvimento atualmente';
+  const globalQ = toGlobalResearchQuery(q);
+  assert.match(globalQ, /AI model LLM/i);
+  assert.match(globalQ, /software development coding programming/i);
+  assert.doesNotMatch(globalQ, /\b(qual|modelo|desenvolvimento|atualmente)\b/i);
+
+  const poles = buildMultiPolarQueries(q);
+  assert.match(poles.us, /SWE-bench/i);
+  assert.match(poles.cn, /大模型.*DeepSeek.*Qwen/i);
+  assert.match(poles.ru, /большие языковые модели.*программирование/i);
+
+  assert.equal(
+    isPortugueseOrBrazilianBubbleResult({
+      url: 'https://botpress.com/pt/blog/best-large-language-models',
+      title: 'Os 10 melhores grandes modelos de linguagem'
+    }, q),
+    true
+  );
+  assert.equal(
+    isPortugueseOrBrazilianBubbleResult({
+      url: 'https://habr.com/ru/articles/1021388/',
+      title: 'Какую LLM ставить в production'
+    }, q),
+    false
+  );
+
+  const selected = selectMultiPolarTopResults({
+    usPool: [
+      { url: 'https://botpress.com/pt/blog/best-large-language-models', title: 'Bolha PT' },
+      { url: 'https://arxiv.org/abs/2501.00001', title: 'SWE-bench Verified US' },
+      { url: 'https://en.wikipedia.org/wiki/Large_language_model', title: 'LLM US' },
+      { url: 'https://livebench.ai/leaderboard', title: 'LiveBench US' }
+    ],
+    cnPool: [
+      { url: 'https://opencompass.org.cn/leaderboard-llm', title: 'OpenCompass CN' },
+      { url: 'https://zh.wikipedia.org/wiki/DeepSeek-V3', title: 'DeepSeek-V3 CN' },
+      { url: 'https://github.com/QwenLM/Qwen2.5-Coder', title: 'Qwen2.5-Coder CN' }
+    ],
+    ruPool: [
+      { url: 'https://habr.com/ru/articles/1021388/', title: 'Habr LLM Benchmark RU' },
+      { url: 'https://mera.a-ai.ru/ru/leaderboard', title: 'MERA Benchmark RU' },
+      { url: 'https://ru.wikipedia.org/wiki/Большая_языковая_модель', title: 'LLM Wiki RU' }
+    ]
+  }, 9, q);
+
+  assert.equal(selected.length, 9);
+  assert.ok(!selected.some((s) => s.url.includes('/pt/')), 'Nenhum resultado da bolha /pt/ deve entrar');
+  assert.match(selected[0].title, /^\[🇺🇸 US\]/);
+  assert.match(selected[1].title, /^\[🇨🇳 CN\]/);
+  assert.match(selected[2].title, /^\[🇷🇺 RU\]/);
+});
+
 
 
 
