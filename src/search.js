@@ -1068,26 +1068,37 @@ async function collectMultiPolarFederation(query, {
 
   const cleanExtra = (extraRawResults || []).filter((item) => !isPortugueseOrBrazilianBubbleResult(item, query));
 
-  const usPool = [
-    ...usOpenAlex,
-    ...usHn,
-    ...usArxiv,
-    ...usBing,
-    ...usWiki,
-    ...cleanExtra
-  ].slice(0, 8);
+  const interleaveArrays = (...arrays) => {
+    const out = [];
+    const maxLen = Math.max(0, ...arrays.map((a) => (Array.isArray(a) ? a.length : 0)));
+    for (let i = 0; i < maxLen; i++) {
+      for (const arr of arrays) {
+        if (Array.isArray(arr) && arr[i]) {
+          out.push(arr[i]);
+        }
+      }
+    }
+    return out;
+  };
 
-  const cnPool = [
-    ...cnOpenAlex,
-    ...cnWiki,
-    ...(wantsGitHub ? [] : cnGitHub)
-  ].slice(0, 6);
+  // Intercala dentro de cada polo (Web/Enciclopédia + Paper Acadêmico do País + Engenharia/Código)
+  const usPool = interleaveArrays(
+    [...cleanExtra, ...usBing],
+    usOpenAlex,
+    [...usHn, ...usArxiv, ...usWiki]
+  ).slice(0, 8);
 
-  const ruPool = [
-    ...ruHabr,
-    ...ruOpenAlex,
-    ...ruWiki
-  ].slice(0, 6);
+  const cnPool = interleaveArrays(
+    cnWiki,
+    cnOpenAlex,
+    wantsGitHub ? [] : cnGitHub
+  ).slice(0, 6);
+
+  const ruPool = interleaveArrays(
+    ruHabr,
+    ruOpenAlex,
+    ruWiki
+  ).slice(0, 6);
 
   return selectMultiPolarTopResults(
     {
