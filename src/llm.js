@@ -3,7 +3,7 @@
 const { execFile, spawn } = require('node:child_process');
 const { request } = require('undici');
 
-let wslHolderSpawned = false;
+let wslHolderChild = null;
 
 /**
  * Mantém uma referência de sessão `wsl.exe` invisível aberta no Windows para impedir
@@ -11,15 +11,25 @@ let wslHolderSpawned = false;
  * o que derrubaria o `ollama.service` no meio do stream (`ECONNRESET` / `Invalid EOF state`).
  */
 function ensureWslKeepAliveHolder() {
-  if (process.platform !== 'win32' || wslHolderSpawned) return;
+  if (process.platform !== 'win32') return;
+  if (wslHolderChild && wslHolderChild.exitCode === null && !wslHolderChild.killed) return;
   try {
-    const child = spawn('wsl.exe', ['-e', 'sh', '-c', 'pgrep -f "sleep infinity" >/dev/null 2>&1 || exec sleep infinity'], {
+    const child = spawn('wsl.exe', ['-e', 'sleep', 'infinity'], {
       detached: true,
-      stdio: 'ignore',
+      stdio: ['pipe', 'ignore', 'ignore'],
       windowsHide: true
     });
+    child.on('exit', () => {
+      if (wslHolderChild === child) wslHolderChild = null;
+    });
+    child.on('error', () => {
+      if (wslHolderChild === child) wslHolderChild = null;
+    });
+    if (child.stdin && typeof child.stdin.unref === 'function') {
+      child.stdin.unref();
+    }
     child.unref();
-    wslHolderSpawned = true;
+    wslHolderChild = child;
   } catch (_) {
     // Ignora caso wsl.exe não exista na máquina
   }
@@ -157,6 +167,9 @@ function resolveLlmConfig(env = process.env, selectedModel = '') {
  * instalados e permitir seleção dinâmica na interface.
  */
 async function listOllamaModels({ env = process.env, requestFn = request } = {}) {
+  if (requestFn === request) {
+    ensureWslKeepAliveHolder();
+  }
   const baseUrl = String(env.OLLAMA_BASE_URL || DEFAULT_OLLAMA_BASE_URL).trim().replace(/\/+$/, '');
   const defaultModel = String(env.OLLAMA_MODEL || DEFAULT_OLLAMA_MODEL).trim();
 
