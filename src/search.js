@@ -71,6 +71,9 @@ const HIGH_SIGNAL_DOMAINS = [
   'en.wikipedia.org',
   'zh.wikipedia.org',
   'ru.wikipedia.org',
+  'pt.wikipedia.org',
+  'scielo.br',
+  'palantir.com',
   'arxiv.org',
   'export.arxiv.org',
   'openalex.org',
@@ -171,15 +174,43 @@ function isPortugueseOrBrazilianBubbleResult(item, rawQuery = '') {
 }
 
 /**
+ * Detecta se um candidato pertence a uma fazenda de conteúdo escolar rasa, dicionário ou clickbait (`LOW_SIGNAL_DOMAINS`),
+ * usado para manter o Polo 🇧🇷 Brasil/Português restrito a fontes acadêmicas, enciclopédicas e técnicas de alto sinal.
+ */
+function isLowSignalResult(item) {
+  if (!item || !item.url) return true;
+  let host = '';
+  try {
+    host = new URL(item.url).hostname.replace(/^www\./i, '').toLowerCase();
+  } catch (_) {
+    return true;
+  }
+  if (LOW_SIGNAL_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`))) {
+    return true;
+  }
+  const text = `${item.title || ''} ${item.description || ''}`;
+  if (/\b(os\s+\d+\s+melhores|descubra\s+qual\s+[eé]\s+a\s+melhor|veja\s+os\s+melhores)\b/i.test(text)) {
+    return true;
+  }
+  return false;
+}
+
+/**
  * Mapa léxico PT/ES -> EN para expandir/converter pesquisas locais em consultas globais (Worldwide Research)
  * capazes de atingir literatura primária internacional (ArXiv, OpenAlex, Kernel.org, GitHub, Wikipedia EN, NVD, IEEE).
  */
 const PT_TO_GLOBAL_TERMS = [
   [/\bcomo\s+(?:fazer|fabricar|produzir|sintetizar|preparar)\b/gi, 'synthesis composition'],
-  [/\b(?:como\s+funciona(?:m)?|o\s+que\s+s[ãa]o|o\s+que\s+[eé]|qual\s+[ea]\s+diferen[çc]a\s+entre|quais\s+s[ãa]o\s+(?:os|as)?|qual\s+[eo]?\s*|quais\s+[os|as]?\s*|me\s+explique|explique\s+como|procure|busque|encontre|me\s+traga|traga|liste|mostre)\b/gi, ' '],
+  [/\b(?:como\s+funciona(?:m)?|o\s+que\s+s[ãa]o|o\s+que\s+[eé]|qual\s+[ea]\s+diferen[çc]a\s+entre|quais\s+s[ãa]o\s+(?:os|as)?|qual\s+[eo]?\s*|quais\s+[os|as]?\s*|me\s+explique|explique\s+como|procure|busque|encontre|me\s+traga|traga|liste|mostre|quero|preciso\s+de)\b/gi, ' '],
+  [/\b(?:materiais?|conte[úu]dos?|documenta[çc][ãa]o|artigos?|estudos?|guias?|tutoriais?|refer[êe]ncias?)\s+(?:de|da|do|dos|das|sobre|para|pela|pelo)\b/gi, ' '],
+  [/\bmateriais?\b/gi, ' '],
+  [/\bontologia(?:s)?\s+(?:de\s+)?(?:ia|i\.a\.|intelig[êe]ncia\s+artificial|dados)?\s*(?:pela|da|do|na|no|em)?\s*palantir\b/gi, 'Palantir Foundry AIP Ontology knowledge graph enterprise AI'],
+  [/\bontologia(?:s)?\b/gi, 'Ontology semantic data model knowledge graph'],
+  [/\bpalantir\b/gi, 'Palantir Foundry AIP'],
+  [/\bgrafo(?:s)?\s+de\s+conhecimento\b/gi, 'knowledge graph'],
   [/\bmodelo(?:s)?\s+de\s+(?:ia|intelig[êe]ncia\s+artificial)\b/gi, 'AI model LLM'],
-  [/\bintelig[êe]ncia(?:s)?\s+artificial(?:is)?\b/gi, 'artificial intelligence AI LLM'],
-  [/\b(?:ia|i\.a\.)\b/gi, 'AI LLM'],
+  [/\bintelig[êe]ncia(?:s)?\s+artificial(?:is)?\b/gi, 'artificial intelligence AI'],
+  [/\b(?:ia|i\.a\.)\b/gi, 'AI'],
   [/\bmais\s+(?:forte(?:s)?|poderoso(?:s)?|avan[çc]ado(?:s)?|inteligente(?:s)?|capaz(?:es)?|r[áa]pido(?:s)?|eficiente(?:s)?)\b/gi, 'strongest SOTA top'],
   [/\bforte(?:s)?\b/gi, 'strongest SOTA'],
   [/\bmelhor(?:es)?\b/gi, 'best top SOTA'],
@@ -213,6 +244,8 @@ const PT_TO_GLOBAL_TERMS = [
   [/\barquitetura\b/gi, 'architecture'],
   [/\bdesempenho\b/gi, 'performance benchmark'],
   [/\bbanco\s+de\s+dados\b/gi, 'database'],
+  [/\bdados\b/gi, 'data'],
+  [/\bagente(?:s)?\b/gi, 'agents'],
   [/\bsistema(?:s)?\s+operacional(?:is)?\b/gi, 'operating system'],
   [/\bmem[óo]ria\s+cache\b/gi, 'CPU cache'],
   [/\bmem[óo]ria\b/gi, 'memory'],
@@ -256,33 +289,92 @@ function toGlobalResearchQuery(rawQuery) {
     .replace(/\s+/g, ' ')
     .trim();
 
-  return transformed || clean;
+  // Deduplica palavras adjacentes/repetidas mantendo a ordem
+  const uniqueTokens = [];
+  const seenLower = new Set();
+  for (const tok of transformed.split(/\s+/)) {
+    const l = tok.toLowerCase();
+    if (!seenLower.has(l)) {
+      seenLower.add(l);
+      uniqueTokens.push(tok);
+    }
+  }
+
+  return uniqueTokens.join(' ') || clean;
 }
 
 /**
  * Gera consultas nativas Multi-Polo (🇺🇸 Estados Unidos / Inglês Global, 🇨🇳 China / Chinês Simplificado,
- * 🇷🇺 Rússia / Russo Técnico) para furar a bolha geográfica e buscar nos ecossistemas líderes mundiais.
+ * 🇷🇺 Rússia / Russo Técnico e 🇧🇷 Brasil / Português Técnico & Acadêmico) para equilibrar os 4 polos.
  */
 function buildMultiPolarQueries(rawQuery) {
   const enBase = toGlobalResearchQuery(rawQuery);
   const lower = `${rawQuery || ''} ${enBase}`.toLowerCase();
 
+  const strippedPt = String(rawQuery || '')
+    .replace(/\b(?:me\s+traga|traga|procure|busque|encontre|liste|mostre|explique|como\s+funciona(?:m)?|o\s+que\s+[eé]|qual\s+[eo]?|quais\s+(?:s[ãa]o|os|as)?|materiais?\s+(?:de|da|do|sobre)?|conte[úu]dos?\s+(?:de|sobre)?)\b/gi, ' ')
+    .replace(/\b(?:pela|pelo|para|sobre)\b/gi, ' ')
+    .replace(/[?!.]+$/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
   let usQuery = enBase;
+  let academicCore = enBase;
   let cnTerms = [];
   let ruTerms = [];
+  let cnWikiCustom = '';
+  let ruWikiCustom = '';
+  let brQuery = strippedPt || enBase;
+  let brWiki = strippedPt || enBase;
 
-  if (/\b(ai|llm|model|coding|programming|software\s+development|benchmark|leaderboard)\b/i.test(lower)) {
+  const isOntologyOrPalantir = /\b(ontolog\w*|palantir|foundry|aip|knowledge\s+graph|grafo\s+de\s+conhecimento|semantic\s+layer)\b/i.test(lower);
+  const isModelBenchmark = !isOntologyOrPalantir && /\b(llm|coding|programming|software\s+development|benchmark|leaderboard|strongest|best|top|sota)\b/i.test(lower);
+
+  if (isOntologyOrPalantir) {
+    if (/\bpalantir\b/i.test(lower)) {
+      usQuery = 'Palantir Foundry AIP Ontology enterprise AI knowledge graph architecture';
+      academicCore = 'enterprise ontology knowledge graph large language model AI decision making';
+      cnTerms.push('Palantir', 'Foundry', 'AIP', '本体', '知识图谱', '企业级AI', '语义层');
+      ruTerms.push('Palantir', 'Foundry', 'онтология данных', 'граф знаний', 'ИИ', 'архитектура');
+      cnWikiCustom = 'Palantir OR 知识图谱 OR 本体_(信息科学)';
+      ruWikiCustom = 'Palantir OR Онтология_(информатика) OR Граф_знаний';
+      brQuery = 'Palantir Foundry AIP ontologia de dados inteligência artificial grafo de conhecimento';
+      brWiki = 'Palantir Technologies OR "Ontologia (ciência da computação)"';
+    } else {
+      usQuery = `${enBase} ontology knowledge graph semantic model AI`.trim();
+      academicCore = 'ontology knowledge graph artificial intelligence semantic reasoning LLM';
+      cnTerms.push('本体论', '知识图谱', '语义建模', '人工智能', '大模型');
+      ruTerms.push('онтология', 'граф знаний', 'семантическая модель', 'искусственный интеллект');
+      cnWikiCustom = '本体_(信息科学) OR 知识图谱';
+      ruWikiCustom = 'Онтология_(информатика) OR Граф_знаний';
+      brQuery = 'ontologia ciência da computação inteligência artificial grafo de conhecimento';
+      brWiki = '"Ontologia (ciência da computação)" OR "Grafo de conhecimento"';
+    }
+  } else if (isModelBenchmark) {
     usQuery = `${enBase} SWE-bench LiveBench LMSYS evaluation`.trim();
+    academicCore = 'large language model code generation software engineering benchmark evaluation';
     cnTerms.push('大模型', '编程', '代码生成', '评测', '基准', 'DeepSeek', 'Qwen', 'OpenCompass');
     ruTerms.push('большие языковые модели', 'LLM', 'программирование', 'бенчмарк', 'MERA', 'YandexGPT', 'GigaChat');
+    cnWikiCustom = '大语言模型 OR DeepSeek OR 通义千问';
+    ruWikiCustom = 'Большая_языковая_модель OR GigaChat OR YandexGPT';
+    brQuery = 'modelos de inteligência artificial programação desenvolvimento de software LLM benchmark';
+    brWiki = 'Grande modelo de linguagem';
   }
   if (/\b(3d|cad|modeling|mesh|sculpting|blender|freecad)\b/i.test(lower)) {
+    academicCore = '3D CAD modeling geometric kernel open source mesh generation';
     cnTerms.push('开源', '三维建模', 'CAD', '几何内核', '渲染引擎');
     ruTerms.push('3D моделирование', 'САПР', 'открытый исходный код', 'геометрическое ядро', 'OpenCASCADE');
+    cnWikiCustom = '三维建模 OR Blender OR FreeCAD';
+    ruWikiCustom = 'Трёхмерная_графика OR Blender OR FreeCAD';
+    brQuery = 'modelagem 3D código aberto CAD Blender FreeCAD computação gráfica';
+    brWiki = '"Modelagem 3D" OR Blender OR FreeCAD';
   }
   if (/\b(nuclear|fission|fusion|reactor)\b/i.test(lower)) {
     cnTerms.push('核反应堆', '核裂变', '核聚变', '反应堆物理');
     ruTerms.push('ядерный реактор', 'деление ядра', 'термоядерный синтез', 'ВВЭР', 'Росатом');
+    cnWikiCustom = '核反应堆 OR 核裂变';
+    ruWikiCustom = 'Ядерный_реактор OR Деление_ядра';
+    brWiki = '"Reator nuclear" OR "Fissão nuclear"';
   }
   if (/\b(security|vulnerability|cve|exploit|reverse\s+engineering|cybersecurity|attack)\b/i.test(lower)) {
     cnTerms.push('漏洞分析', '安全研究', '渗透测试', '逆向工程');
@@ -299,8 +391,8 @@ function buildMultiPolarQueries(rawQuery) {
 
   const coreTokens = enBase
     .split(/\s+/)
-    .filter((w) => w.length >= 3 && !/^(strongest|best|top|sota|current|latest|comparison|synthesis|composition)$/i.test(w))
-    .slice(0, 5);
+    .filter((w) => w.length >= 2 && !/^(strongest|best|top|sota|current|latest|comparison|synthesis|composition|2026)$/i.test(w))
+    .slice(0, 6);
 
   if (cnTerms.length === 0) {
     cnTerms.push('技术架构', '基准评测', '学术研究');
@@ -312,10 +404,13 @@ function buildMultiPolarQueries(rawQuery) {
   return {
     us: usQuery,
     cn: `${cnTerms.slice(0, 8).join(' ')} ${coreTokens.slice(0, 3).join(' ')}`.trim(),
-    cnWiki: `${cnTerms.slice(0, 4).join(' ')} ${coreTokens.slice(0, 2).join(' ')}`.trim(),
+    cnWiki: cnWikiCustom || `${cnTerms.slice(0, 2).join(' OR ')}`.trim(),
     ru: `${ruTerms.slice(0, 7).join(' ')} ${coreTokens.slice(0, 3).join(' ')}`.trim(),
-    ruWiki: `${ruTerms.slice(0, 3).join(' ')} ${coreTokens.slice(0, 2).join(' ')}`.trim(),
-    enCore: coreTokens.join(' ') || enBase
+    ruWiki: ruWikiCustom || `${ruTerms.slice(0, 2).join(' OR ')}`.trim(),
+    br: brQuery,
+    brWiki,
+    enCore: coreTokens.join(' ') || enBase,
+    academicCore: academicCore || coreTokens.join(' ') || enBase
   };
 }
 
@@ -633,18 +728,30 @@ function extractSubjectTokens(query = '') {
       .toLowerCase()
       .replace(/[^\p{L}\p{N}\s_-]/gu, ' ')
       .split(/\s+/)
-      .filter((w) => (w.length >= 3 || w === '3d' || w === 'ai' || w === 'os') && !/^(how|what|why|when|where|who|which|the|and|for|with|from|into|http|https|www|com|org|net|git|github|repository|repositories|software|softwares|opensource|open|source|code|documentation|example|implementation|como|que|qual|quais|para|com|dos|das|uma|uns|umas|por|sobre|entre|fazer|funciona|funcionam|prática|pratica|contexto|dentro|análise|analise|técnica|tecnica|direta|fontes|incidente|incidentes|globais|global|arquitetura|sistema|sistemas|procure|busque|traga|mostre|liste|principais|melhores|repositório|repositorio|repositórios|repositorios|process|technical|overview|architecture|mechanism|internals|design|differences|comparison|synthesis|chemical|composition)$/.test(w))
+      .filter((w) => (w.length >= 3 || w === '3d' || w === 'ai' || w === 'os') && !/^(how|what|why|when|where|who|which|the|and|for|with|from|into|http|https|www|com|org|net|git|github|repository|repositories|software|softwares|opensource|open|source|code|documentation|example|implementation|como|que|qual|quais|para|com|dos|das|uma|uns|umas|por|pela|pelo|sobre|entre|fazer|funciona|funcionam|prática|pratica|contexto|dentro|análise|analise|técnica|tecnica|direta|fontes|incidente|incidentes|globais|global|arquitetura|sistema|sistemas|procure|busque|traga|mostre|liste|materiais|material|conteudos|conteúdos|conteudo|conteúdo|documentacao|documentação|artigos|artigo|estudos|estudo|guias|guia|principais|melhores|repositório|repositorio|repositórios|repositorios|process|technical|overview|architecture|mechanism|internals|design|differences|comparison|synthesis|chemical|composition)$/.test(w))
   )];
 }
 
 /**
- * Detecta URLs explícitas (`https://...`) ou referências a repositórios (`github.com/owner/repo`, `NOME.git`)
- * presentes na pergunta do usuário para buscá-las e extraí-las diretamente em 1º lugar.
+ * Detecta URLs explícitas (`https://...`), referências a repositórios (`github.com/owner/repo`, `NOME.git`)
+ * ou arquiteturas corporativas canônicas presentes na pergunta do usuário para buscá-las em 1º lugar.
  */
 async function resolveDirectUrlAndGitCandidates(query, { httpRequest = request, timeoutMs = 4500 } = {}) {
   const raw = String(query || '');
   const candidates = [];
   const seenUrls = new Set();
+
+  // 0. Arquitetura Canônica Palantir Foundry / AIP Ontology quando solicitada diretamente
+  if (/\bpalantir\b/i.test(raw) && /\b(ontolog\w*|foundry|aip|ia|ai|dados|data|grafo|graph)\b/i.test(raw)) {
+    const palantirDocUrl = 'https://www.palantir.com/docs/foundry/ontology/overview';
+    seenUrls.add(palantirDocUrl);
+    candidates.push({
+      url: palantirDocUrl,
+      title: '[🇺🇸 US] Palantir Foundry & AIP Ontology — Official Architecture Documentation',
+      description: '[🇺🇸 US] The Palantir Ontology is the operational digital twin and semantic layer of the enterprise inside Palantir Foundry and AIP (Artificial Intelligence Platform). It maps raw datasets, streaming pipelines, and ML models into semantic Objects, Properties, Links (knowledge graph relationships), Actions (transactional kinetic operations with governance/RBAC), and Functions (TypeScript/Python business logic). In Palantir AIP, LLMs and autonomous AI agents interact with the enterprise exclusively through the Ontology SDK (OSDK), grounding generative AI in real-time operational data, deterministic tool-use Actions, and granular security permissions without hallucination.',
+      countryPole: 'US'
+    });
+  }
 
   // 1. URLs diretas explícitas digitadas pelo usuário (ex.: https://github.com/BaaRai/ARTEX)
   const urlMatches = raw.match(/https?:\/\/[^\s"'<>?]+/gi) || [];
@@ -937,22 +1044,28 @@ async function searchWikipediaByLang(query, lang = 'en', {
 }
 
 /**
- * Seleciona um conjunto geograficamente balanceado entre os polos 🇺🇸 US, 🇨🇳 CN e 🇷🇺 RU,
- * garantindo representatividade de cada país e bloqueando sites da bolha `.br`/`/pt/`.
+ * Seleciona um conjunto geograficamente balanceado entre os 4 polos:
+ * 🇺🇸 US (Inglês/EUA), 🇨🇳 CN (China), 🇷🇺 RU (Rússia) e 🇧🇷 BR (Brasil / Português Técnico & Acadêmico),
+ * garantindo representatividade de cada país e bloqueando fazendas de conteúdo escolar raso (`LOW_SIGNAL_DOMAINS`).
  */
 function selectMultiPolarTopResults({
   directCandidates = [],
   usPool = [],
   cnPool = [],
   ruPool = [],
+  brPool = [],
   globalPool = []
 } = {}, totalCount = MULTI_POLAR_RESULTS_COUNT, query = '') {
   const seenUrls = new Set();
   const finalResults = [];
 
-  const canAccept = (item) => {
+  const canAccept = (item, allowPortuguesePole = false) => {
     if (!item || typeof item.url !== 'string') return false;
-    if (isPortugueseOrBrazilianBubbleResult(item, query)) return false;
+    if (allowPortuguesePole || item.countryPole === 'BR') {
+      if (isLowSignalResult(item)) return false;
+    } else if (isPortugueseOrBrazilianBubbleResult(item, query)) {
+      return false;
+    }
     let normUrl = item.url;
     try {
       const u = new URL(item.url);
@@ -982,7 +1095,7 @@ function selectMultiPolarTopResults({
 
   for (const d of directCandidates) {
     if (finalResults.length >= totalCount) break;
-    if (canAccept(d)) {
+    if (canAccept(d, d.countryPole === 'BR')) {
       finalResults.push(d);
     }
   }
@@ -990,27 +1103,31 @@ function selectMultiPolarTopResults({
   const usQueue = usPool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, query)).map((x) => withPoleBadge(x, '[🇺🇸 US]', 'US'));
   const cnQueue = cnPool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, query)).map((x) => withPoleBadge(x, '[🇨🇳 CN]', 'CN'));
   const ruQueue = ruPool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, query)).map((x) => withPoleBadge(x, '[🇷🇺 RU]', 'RU'));
+  const brQueue = brPool.filter((x) => !isLowSignalResult(x)).map((x) => withPoleBadge(x, '[🇧🇷 BR]', 'BR'));
   const glQueue = globalPool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, query)).map((x) => withPoleBadge(x, '[🌍 GLOBAL]', 'GLOBAL'));
 
-  // Intercala em round-robin estrito: 🇺🇸 US -> 🇨🇳 CN -> 🇷🇺 RU (garantindo 3 de cada polo quando totalCount=9)
+  // Intercala em round-robin estrito nos 4 polos: 🇺🇸 US -> 🇨🇳 CN -> 🇷🇺 RU -> 🇧🇷 BR
   let cursor = 0;
-  const maxCursor = Math.max(usQueue.length, cnQueue.length, ruQueue.length, glQueue.length);
+  const maxCursor = Math.max(usQueue.length, cnQueue.length, ruQueue.length, brQueue.length, glQueue.length);
   while (finalResults.length < totalCount && cursor < maxCursor) {
-    if (cursor < usQueue.length && finalResults.length < totalCount && canAccept(usQueue[cursor])) {
+    if (cursor < usQueue.length && finalResults.length < totalCount && canAccept(usQueue[cursor], false)) {
       finalResults.push(usQueue[cursor]);
     }
-    if (cursor < cnQueue.length && finalResults.length < totalCount && canAccept(cnQueue[cursor])) {
+    if (cursor < cnQueue.length && finalResults.length < totalCount && canAccept(cnQueue[cursor], false)) {
       finalResults.push(cnQueue[cursor]);
     }
-    if (cursor < ruQueue.length && finalResults.length < totalCount && canAccept(ruQueue[cursor])) {
+    if (cursor < ruQueue.length && finalResults.length < totalCount && canAccept(ruQueue[cursor], false)) {
       finalResults.push(ruQueue[cursor]);
+    }
+    if (cursor < brQueue.length && finalResults.length < totalCount && canAccept(brQueue[cursor], true)) {
+      finalResults.push(brQueue[cursor]);
     }
     cursor += 1;
   }
 
   for (const g of glQueue) {
     if (finalResults.length >= totalCount) break;
-    if (canAccept(g)) {
+    if (canAccept(g, false)) {
       finalResults.push(g);
     }
   }
@@ -1020,8 +1137,8 @@ function selectMultiPolarTopResults({
 
 /**
  * Executa a Federação Geopolítica Multi-Polo em paralelo:
- * Coleta até 6 candidatos dos 🇺🇸 Estados Unidos, 6 da 🇨🇳 China e 6 da 🇷🇺 Rússia (18+ candidatos mundiais)
- * e seleciona um conjunto balanceado livre de viés regional brasileiro.
+ * Coleta candidatos dos 4 polos (🇺🇸 Estados Unidos, 🇨🇳 China, 🇷🇺 Rússia e 🇧🇷 Brasil/Português)
+ * e seleciona um conjunto balanceado com alta autoridade técnica e acadêmica.
  */
 async function collectMultiPolarFederation(query, {
   httpRequest = request,
@@ -1034,39 +1151,46 @@ async function collectMultiPolarFederation(query, {
 
   const [
     directCandidates,
-    // 🇺🇸 Polo Estados Unidos (6 candidatos: OpenAlex US + HN + ArXiv + Wikipedia EN + Bing US)
+    // 🇺🇸 Polo Estados Unidos (OpenAlex US + HN + ArXiv + Wikipedia EN + Bing US)
     usOpenAlex,
     usHn,
     usArxiv,
     usWiki,
     usBing,
-    // 🇨🇳 Polo China (6 candidatos: OpenAlex China + Wikipedia ZH + GitHub China/Global)
+    // 🇨🇳 Polo China (OpenAlex China + Wikipedia ZH + GitHub China/Global)
     cnOpenAlex,
     cnWiki,
     cnGitHub,
-    // 🇷🇺 Polo Rússia (6 candidatos: Habr RU + OpenAlex Russia + Wikipedia RU)
+    // 🇷🇺 Polo Rússia (Habr RU + OpenAlex Russia + Wikipedia RU)
     ruHabr,
     ruOpenAlex,
-    ruWiki
+    ruWiki,
+    // 🇧🇷 Polo Brasil / Português Técnico & Acadêmico (Wikipedia PT + OpenAlex Brasil)
+    brWiki,
+    brOpenAlex
   ] = await Promise.all([
     resolveDirectUrlAndGitCandidates(query, { httpRequest, timeoutMs: 4000 }),
-    // US Pole (6+)
-    searchOpenAlexGlobal(poles.enCore, { httpRequest, timeoutMs: 4500, count: 3, countryCode: 'US', countryPole: 'US', countryBadge: '[🇺🇸 US]' }),
+    // US Pole
+    searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 4500, count: 3, countryCode: 'US', countryPole: 'US', countryBadge: '[🇺🇸 US]' }),
     searchHackerNewsGlobal(poles.enCore, { httpRequest, timeoutMs: 4000, count: 2 }),
-    searchArxivGlobal(poles.enCore, { httpRequest, timeoutMs: 4500, count: 2 }),
+    searchArxivGlobal(poles.academicCore, { httpRequest, timeoutMs: 4500, count: 2 }),
     searchWikipediaByLang(poles.enCore, 'en', { httpRequest, timeoutMs: 4000, count: 2, countryPole: 'US', countryBadge: '[🇺🇸 US]' }),
     searchBingHtml(poles.us, { httpRequest, timeoutMs: 4500, count: 3 }),
-    // China Pole (6+)
-    searchOpenAlexGlobal(poles.enCore, { httpRequest, timeoutMs: 4500, count: 4, countryCode: 'CN', countryPole: 'CN', countryBadge: '[🇨🇳 CN]' }),
+    // China Pole
+    searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 4500, count: 4, countryCode: 'CN', countryPole: 'CN', countryBadge: '[🇨🇳 CN]' }),
     searchWikipediaByLang(poles.cnWiki, 'zh', { httpRequest, timeoutMs: 4000, count: 3, countryPole: 'CN', countryBadge: '[🇨🇳 CN]' }),
     searchGitHubGlobal(poles.enCore, { httpRequest, timeoutMs: 4000, count: wantsGitHub ? 5 : 2 }),
-    // Russia Pole (6+)
+    // Russia Pole
     searchHabrRussia(poles.ru, { httpRequest, timeoutMs: 4500, count: 3, fallbackQuery: poles.enCore }),
-    searchOpenAlexGlobal(poles.enCore, { httpRequest, timeoutMs: 4500, count: 3, countryCode: 'RU', countryPole: 'RU', countryBadge: '[🇷🇺 RU]' }),
-    searchWikipediaByLang(poles.ruWiki, 'ru', { httpRequest, timeoutMs: 4000, count: 2, countryPole: 'RU', countryBadge: '[🇷🇺 RU]' })
+    searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 4500, count: 3, countryCode: 'RU', countryPole: 'RU', countryBadge: '[🇷🇺 RU]' }),
+    searchWikipediaByLang(poles.ruWiki, 'ru', { httpRequest, timeoutMs: 4000, count: 2, countryPole: 'RU', countryBadge: '[🇷🇺 RU]' }),
+    // Brazil / Portuguese Pole
+    searchWikipediaByLang(poles.brWiki, 'pt', { httpRequest, timeoutMs: 4000, count: 3, countryPole: 'BR', countryBadge: '[🇧🇷 BR]' }),
+    searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 4500, count: 3, countryCode: 'BR', countryPole: 'BR', countryBadge: '[🇧🇷 BR]' })
   ]);
 
   const cleanExtra = (extraRawResults || []).filter((item) => !isPortugueseOrBrazilianBubbleResult(item, query));
+  const brExtra = (extraRawResults || []).filter((item) => isPortugueseOrBrazilianBubbleResult(item, query) && !isLowSignalResult(item));
 
   const interleaveArrays = (...arrays) => {
     const out = [];
@@ -1100,12 +1224,19 @@ async function collectMultiPolarFederation(query, {
     ruWiki
   ).slice(0, 6);
 
+  const brPool = interleaveArrays(
+    brWiki,
+    brOpenAlex,
+    brExtra
+  ).slice(0, 6);
+
   return selectMultiPolarTopResults(
     {
       directCandidates: wantsGitHub ? [...directCandidates, ...cnGitHub] : directCandidates,
       usPool,
       cnPool,
       ruPool,
+      brPool,
       globalPool: [...cnGitHub, ...usArxiv]
     },
     totalCount,

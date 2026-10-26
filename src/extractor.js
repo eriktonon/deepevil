@@ -191,11 +191,20 @@ async function extractReadablePage(targetUrl, fallbackTitle = '', options = {}) 
       return null;
     }
 
+    const articleTitleCheck = String(article?.title || doc.title || '').trim();
+    if (
+      /^(client\s+challenge|just\s+a\s+moment|attention\s+required|access\s+denied|security\s+check|ddos-guard|verifying\s+you\s+are\s+human)/i.test(articleTitleCheck) ||
+      /\b(enable\s+javascript\s+and\s+cookies\s+to\s+continue|checking\s+if\s+the\s+site\s+connection\s+is\s+secure)\b/i.test(rawText)
+    ) {
+      return null;
+    }
+
     const excerpt = clipAtBoundary(rawText, maxChars);
     const words = excerpt.split(/\s+/).filter(Boolean);
     const domain = parsedUrl.hostname.replace(/^www\./i, '');
-    const poleMatch = String(fallbackTitle || '').match(/^(\[(?:🇺🇸|🇨🇳|🇷🇺|🌍)[^\]]+\])\s*/);
-    const rawExtractedTitle = String(article?.title || fallbackTitle || domain).replace(/\s+/g, ' ').trim();
+    const poleMatch = String(fallbackTitle || '').match(/^(\[(?:🇺🇸|🇨🇳|🇷🇺|🇧🇷|🌍)[^\]]+\])\s*/);
+    const extractedCandidate = String(article?.title || '').replace(/\s+/g, ' ').trim();
+    const rawExtractedTitle = (extractedCandidate.length >= 15 ? extractedCandidate : String(fallbackTitle || extractedCandidate || domain)).replace(/\s+/g, ' ').trim();
     const title = poleMatch && !rawExtractedTitle.startsWith('[')
       ? `${poleMatch[1]} ${rawExtractedTitle}`
       : rawExtractedTitle;

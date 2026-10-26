@@ -1136,7 +1136,7 @@ test('14. Granite 4.2 32K Context & Anti-Context-Bleeding: num_ctx padrão 32768
   assert.equal(cleaned, 'Controle de Concorrência e Motores [1][2]');
 });
 
-test('15. Federação Geopolítica Multi-Polo (🇺🇸 US + 🇨🇳 China + 🇷🇺 Rússia) e Bloqueio Anti-Bolha Geográfica (.br / /pt/)', () => {
+test('15. Federação Geopolítica Multi-Polo (🇺🇸 US + 🇨🇳 China + 🇷🇺 Rússia + 🇧🇷 Brasil/Português) e Precisão de Entidades', () => {
   const q = 'qual o modelo de IA mais forte para desenvolvimento atualmente';
   const globalQ = toGlobalResearchQuery(q);
   assert.match(globalQ, /AI model LLM/i);
@@ -1147,6 +1147,18 @@ test('15. Federação Geopolítica Multi-Polo (🇺🇸 US + 🇨🇳 China + �
   assert.match(poles.us, /SWE-bench/i);
   assert.match(poles.cn, /大模型.*DeepSeek.*Qwen/i);
   assert.match(poles.ru, /большие языковые модели.*программирование/i);
+  assert.match(poles.br, /modelos de inteligência artificial/i);
+
+  // Testa tradução de ontologia + Palantir sem contaminar com termos genéricos de programação
+  const palantirQ = 'me traga materiais de ontologia de IA pela palantir';
+  const palantirGlobal = toGlobalResearchQuery(palantirQ);
+  assert.match(palantirGlobal, /Palantir Foundry AIP Ontology/i);
+  assert.doesNotMatch(palantirGlobal, /\bmateriais\b/i);
+  const palantirPoles = buildMultiPolarQueries(palantirQ);
+  assert.match(palantirPoles.us, /Palantir Foundry AIP Ontology/i);
+  assert.match(palantirPoles.cn, /Palantir.*Foundry.*本体.*知识图谱/i);
+  assert.match(palantirPoles.ru, /Palantir.*Foundry.*онтология данных/i);
+  assert.match(palantirPoles.br, /Palantir Foundry AIP ontologia de dados/i);
 
   assert.equal(
     isPortugueseOrBrazilianBubbleResult({
@@ -1165,7 +1177,7 @@ test('15. Federação Geopolítica Multi-Polo (🇺🇸 US + 🇨🇳 China + �
 
   const selected = selectMultiPolarTopResults({
     usPool: [
-      { url: 'https://botpress.com/pt/blog/best-large-language-models', title: 'Bolha PT' },
+      { url: 'https://botpress.com/pt/blog/best-large-language-models', title: 'Bolha PT no pool US' },
       { url: 'https://arxiv.org/abs/2501.00001', title: 'SWE-bench Verified US' },
       { url: 'https://en.wikipedia.org/wiki/Large_language_model', title: 'LLM US' },
       { url: 'https://livebench.ai/leaderboard', title: 'LiveBench US' }
@@ -1179,14 +1191,21 @@ test('15. Federação Geopolítica Multi-Polo (🇺🇸 US + 🇨🇳 China + �
       { url: 'https://habr.com/ru/articles/1021388/', title: 'Habr LLM Benchmark RU' },
       { url: 'https://mera.a-ai.ru/ru/leaderboard', title: 'MERA Benchmark RU' },
       { url: 'https://ru.wikipedia.org/wiki/Большая_языковая_модель', title: 'LLM Wiki RU' }
+    ],
+    brPool: [
+      { url: 'https://brasilescola.uol.com.br/informatica/ia.htm', title: 'Site escolar raso bloqueado' },
+      { url: 'https://pt.wikipedia.org/wiki/Grande_modelo_de_linguagem', title: 'Grande modelo de linguagem — Wikipedia (PT)' },
+      { url: 'https://scielo.br/j/ea/a/ia-generativa-usp', title: 'Modelos de Linguagem e Engenharia de Software — USP' }
     ]
   }, 9, q);
 
   assert.equal(selected.length, 9);
-  assert.ok(!selected.some((s) => s.url.includes('/pt/')), 'Nenhum resultado da bolha /pt/ deve entrar');
+  assert.ok(!selected.some((s) => s.url.includes('botpress.com/pt/')), 'Bolha /pt/ infiltrada no pool US deve ser bloqueada');
+  assert.ok(!selected.some((s) => s.url.includes('brasilescola')), 'Domínio escolar raso no pool BR deve ser bloqueado');
   assert.match(selected[0].title, /^\[🇺🇸 US\]/);
   assert.match(selected[1].title, /^\[🇨🇳 CN\]/);
   assert.match(selected[2].title, /^\[🇷🇺 RU\]/);
+  assert.match(selected[3].title, /^\[🇧🇷 BR\]/);
 });
 
 
