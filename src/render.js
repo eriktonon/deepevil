@@ -62,20 +62,25 @@ function renderTopSourcesStrip(turnId, sources = []) {
     .map((src, i) => {
       const idx = src.citationIndex ?? src.citation_index ?? i + 1;
       const shortHost = formatShortDomain(src.domain);
-      const cleanTitle = String(src.title || '').replace(/\$([^$\n]{1,80})\$/g, (_, m) => formatLatexMathInline(m));
+      const rawTitle = String(src.title || '').replace(/\$([^$\n]{1,80})\$/g, (_, m) => formatLatexMathInline(m));
+      const poleMatch = rawTitle.match(/^\[((?:🇺🇸|🇨🇳|🇩🇪|🇯🇵|🇰🇷|🇷🇺|🇧🇷|🌍)\s*[A-Z]+)\]\s*/);
+      const poleTag = poleMatch ? poleMatch[1] : '';
+      const cleanHeadline = poleMatch ? rawTitle.slice(poleMatch[0].length).trim() : rawTitle;
+      const origHint = src.originalTitle && src.originalTitle !== rawTitle ? ` | Original: ${src.originalTitle}` : '';
       const colorCycle = ['g-top-blue', 'g-top-red', 'g-top-yellow', 'g-top-green'][(idx - 1) % 4];
       return `
         <a
           href="#source-${turnId}-${idx}"
           class="top-source-card ${colorCycle}"
           data-source-id="source-${turnId}-${idx}"
-          title="${escapeHtml(`[${idx}] ${cleanTitle} (${src.domain})`)}"
+          title="${escapeHtml(`[${idx}] ${rawTitle} (${src.domain})${origHint}`)}"
         >
           <span class="top-source-card-head">
             <span class="top-source-badge tabular-nums">[${idx}]</span>
+            ${poleTag ? `<span class="top-source-pole-tag">${escapeHtml(poleTag)}</span>` : ''}
             <span class="top-source-domain">${escapeHtml(shortHost)}</span>
           </span>
-          <span class="top-source-title">${escapeHtml(cleanTitle)}</span>
+          <span class="top-source-title">${escapeHtml(cleanHeadline || rawTitle)}</span>
         </a>
       `;
     })
@@ -529,10 +534,14 @@ function renderTurnSourcesFootnotes(turnId, sources = [], meta = {}) {
         <label for="translate-lang-${turnId}" class="sr-only">Idioma para tradução</label>
         <select id="translate-lang-${turnId}" class="turn-translate-select" title="Selecionar idioma de destino">
           <option value="pt-BR">Português (BR)</option>
-          <option value="en">English</option>
-          <option value="es">Español</option>
-          <option value="fr">Français</option>
-          <option value="de">Deutsch</option>
+          <option value="en">English (US)</option>
+          <option value="es">Español (ES)</option>
+          <option value="de">Deutsch (DE)</option>
+          <option value="ja">日本語 (JA)</option>
+          <option value="ko">한국어 (KO)</option>
+          <option value="zh">中文 (ZH)</option>
+          <option value="ru">Русский (RU)</option>
+          <option value="fr">Français (FR)</option>
         </select>
         <button
           type="button"
@@ -728,11 +737,14 @@ function renderTurnCard(turn, options = {}) {
 
   const scopeKey = String(turn.search_scope || 'global').trim().toLowerCase();
   const scopeLabelMap = {
-    global: '🌍 Global (US+CN+RU+BR)',
-    external: '🌐 Só Externo (US+CN+RU)',
-    brazil: '🇧🇷 Só Brasil (PT-BR)'
+    global: 'Global · 7 Polos (US·CN·DE·JP·KR·RU·BR)',
+    external: 'Só Externo (US·CN·DE·JP·KR·RU)',
+    brazil: 'Só Brasil (PT-BR)'
   };
   const scopeBadgeHtml = `<span class="turn-scope-badge" data-scope="${escapeHtml(scopeKey)}">${escapeHtml(scopeLabelMap[scopeKey] || scopeLabelMap.global)}</span>`;
+
+  const langKey = String(turn.search_lang || 'pt-BR').trim();
+  const langBadgeHtml = `<span class="turn-lang-badge" data-lang="${escapeHtml(langKey)}" title="Idioma selecionado para tradução de headlines e síntese">Headlines &amp; Síntese: ${escapeHtml(langKey.toUpperCase())}</span>`;
 
   return `
     <article id="turn-${turn.id}" class="turn-card${isLive ? ' turn-card-live' : ''}" data-turn-id="${turn.id}">
@@ -741,6 +753,7 @@ function renderTurnCard(turn, options = {}) {
         <div class="turn-question-meta">
           <span class="turn-badge">root@deepevil:~# query</span>
           ${scopeBadgeHtml}
+          ${langBadgeHtml}
           ${turn.search_query && turn.search_query !== turn.question ? `<span class="turn-search-query" title="Dork contextual enviada ao motor de busca">dork="${escapeHtml(turn.search_query)}"</span>` : ''}
         </div>
         <h2 class="turn-question-title">${escapeHtml(turn.question)}</h2>
@@ -862,12 +875,16 @@ function renderComposerForm(activeConversation = null, isOob = false, options = 
     `
     : '';
 
+  const activeScope = options.activeScope || 'global';
+  const activeLang = options.activeLang || 'pt-BR';
+  const activeFocus = options.activeFocus || 'web';
+
   return `
     <div id="composer-region" class="composer-region"${oobAttr}>
       ${contextBanner}
       <form
         id="ask-form"
-        class="composer-form google-search-capsule"
+        class="composer-form google-search-capsule composer-command-deck"
         action="/ask"
         method="POST"
         hx-post="/ask"
@@ -875,10 +892,11 @@ function renderComposerForm(activeConversation = null, isOob = false, options = 
         hx-swap="beforeend"
       >
         <input type="hidden" name="conversationId" id="active-conversation-id" value="${escapeHtml(convId)}">
-        <div class="google-pill-bar">
-          <!-- Ícone de Lupa Clássico do Google -->
+
+        <!-- TIER 1: Full-Width Input Row (100% de respiro para digitação sem dropdowns espremendo) -->
+        <div class="google-pill-bar composer-input-row">
           <span class="google-search-icon" aria-hidden="true">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="11" cy="11" r="8"></circle>
               <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
             </svg>
@@ -897,37 +915,7 @@ function renderComposerForm(activeConversation = null, isOob = false, options = 
             ></textarea>
           </div>
 
-          <!-- Seletor de Escopo Geográfico (Global 4 Polos / Só Externo / Só Brasil) -->
-          <div class="scope-selector-wrap" title="Filtrar escopo geográfico das fontes: Global (US+CN+RU+BR), Só Externo (US+CN+RU) ou Só Brasil (PT-BR)">
-            <label for="scope-select" class="sr-only">Escopo de Busca</label>
-            <select id="scope-select" name="searchScope" class="google-scope-select">
-              <option value="global"${options.activeScope === 'global' || !options.activeScope ? ' selected' : ''}>🌍 Global (US+CN+RU+BR)</option>
-              <option value="external"${options.activeScope === 'external' ? ' selected' : ''}>🌐 Só Externo (US+CN+RU)</option>
-              <option value="brazil"${options.activeScope === 'brazil' ? ' selected' : ''}>🇧🇷 Só Brasil (PT-BR)</option>
-            </select>
-          </div>
-
-          <!-- Seletor de Modo de Foco (Web / SecOps / Code / Academic / Híbrido) -->
-          <div class="focus-selector-wrap" title="Selecionar modo de foco da pesquisa">
-            <label for="focus-select" class="sr-only">Modo de Foco</label>
-            <select id="focus-select" name="focusMode" class="google-focus-select">
-              <option value="web"${options.activeFocus === 'web' || !options.activeFocus ? ' selected' : ''}>Foco: Web</option>
-              <option value="secops"${options.activeFocus === 'secops' ? ' selected' : ''}>Foco: SecOps / CVE</option>
-              <option value="code"${options.activeFocus === 'code' ? ' selected' : ''}>Foco: Code / Docs</option>
-              <option value="academic"${options.activeFocus === 'academic' ? ' selected' : ''}>Foco: Academic</option>
-              <option value="hybrid"${options.activeFocus === 'hybrid' ? ' selected' : ''}>Foco: Híbrido (Local + Web)</option>
-            </select>
-          </div>
-
-          <!-- Seletor Dinâmico de LLM (Ollama / Local) -->
-          <div class="model-selector-wrap" title="Selecionar modelo LLM do Ollama para esta pesquisa">
-            <label for="model-select" class="sr-only">Modelo LLM</label>
-            <select id="model-select" name="model" class="google-model-select" data-active-model="${escapeHtml(selectedModelName)}">
-              ${modelOptionsHtml}
-            </select>
-          </div>
-
-          <button type="submit" id="ask-submit-btn" class="composer-submit-btn" title="Executar pesquisa DeepEvil">
+          <button type="submit" id="ask-submit-btn" class="composer-submit-btn" title="Executar pesquisa global DeepEvil">
             <span>${isFollowUp ? 'Follow-up' : 'Pesquisar'}</span>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <line x1="5" y1="12" x2="19" y2="12"></line>
@@ -936,19 +924,107 @@ function renderComposerForm(activeConversation = null, isOob = false, options = 
           </button>
         </div>
 
-        <div class="google-classic-buttons">
-          <button type="submit" class="g-btn">Pesquisa DeepEvil</button>
-          <button
-            type="button"
-            id="feeling-lucky-btn"
-            class="g-btn g-btn-lucky"
-            data-lucky-queries="Como funcionam rootkits de kernel Linux via ftrace e como detectá-los?|Quais técnicas o Mozilla Readability usa para limpar o DOM de páginas web?|Como funcionam Server-Sent Events (SSE) sobre HTTP e por que são ideais para streaming?|Arquitetura interna do motor V8 no Node.js e gerenciamento de memória do undici"
-          >
-            Estou com sorte
-          </button>
-          <span class="composer-hint">
-            <kbd>Enter</kbd> pesquisa · <kbd>Shift+Enter</kbd> nova linha
-          </span>
+        <!-- TIER 2: Tactical Control Deck (Pílulas de precisão para Escopo 7 Polos, Idioma de Headlines, Foco e Engine LLM) -->
+        <div class="composer-control-deck">
+          <div class="composer-tactical-group">
+            <!-- 1. Escopo Geográfico (7 Polos Mundiais / Só Externo / Só Brasil) -->
+            <div class="scope-selector-wrap tactical-control-pill pill-scope" title="Escopo Geográfico: Global 7 Polos (EUA, China, Alemanha, Japão, Coreia do Sul, Rússia e Brasil), Só Externo ou Só Brasil">
+              <svg class="tactical-pill-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="2" y1="12" x2="22" y2="12"></line>
+                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+              </svg>
+              <label for="scope-select" class="tactical-pill-kicker">Escopo</label>
+              <select id="scope-select" name="searchScope" class="google-scope-select tactical-select">
+                <option value="global"${activeScope === 'global' ? ' selected' : ''}>Global · 7 Polos (US·CN·DE·JP·KR·RU·BR)</option>
+                <option value="external"${activeScope === 'external' ? ' selected' : ''}>Só Externo (US·CN·DE·JP·KR·RU)</option>
+                <option value="brazil"${activeScope === 'brazil' ? ' selected' : ''}>Só Brasil (PT-BR)</option>
+              </select>
+            </div>
+
+            <!-- 2. Seletor de Idioma da Busca & Tradução Automática de Headlines -->
+            <div class="lang-selector-wrap tactical-control-pill pill-lang" title="Traduz automaticamente os títulos (headlines) das fontes internacionais e a síntese para o idioma selecionado">
+              <svg class="tactical-pill-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="m5 8 6 6"></path>
+                <path d="m4 14 6-6 2-3"></path>
+                <path d="M2 5h12"></path>
+                <path d="M7 2h1"></path>
+                <path d="m22 22-5-10-5 10"></path>
+                <path d="M14 18h6"></path>
+              </svg>
+              <label for="lang-select" class="tactical-pill-kicker">Idioma</label>
+              <select id="lang-select" name="searchLang" class="google-lang-select tactical-select">
+                <option value="pt-BR"${activeLang === 'pt-BR' ? ' selected' : ''}>Português (BR)</option>
+                <option value="en"${activeLang === 'en' ? ' selected' : ''}>English (US)</option>
+                <option value="es"${activeLang === 'es' ? ' selected' : ''}>Español (ES)</option>
+                <option value="de"${activeLang === 'de' ? ' selected' : ''}>Deutsch (DE)</option>
+                <option value="ja"${activeLang === 'ja' ? ' selected' : ''}>日本語 (JA)</option>
+                <option value="ko"${activeLang === 'ko' ? ' selected' : ''}>한국어 (KO)</option>
+                <option value="zh"${activeLang === 'zh' ? ' selected' : ''}>中文 (ZH)</option>
+                <option value="ru"${activeLang === 'ru' ? ' selected' : ''}>Русский (RU)</option>
+              </select>
+            </div>
+
+            <!-- 3. Modo de Foco (Web / SecOps / Code / Academic / Híbrido) -->
+            <div class="focus-selector-wrap tactical-control-pill pill-focus" title="Selecionar modo de foco técnico da pesquisa">
+              <svg class="tactical-pill-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="10"></circle>
+                <circle cx="12" cy="12" r="6"></circle>
+                <circle cx="12" cy="12" r="2"></circle>
+              </svg>
+              <label for="focus-select" class="tactical-pill-kicker">Foco</label>
+              <select id="focus-select" name="focusMode" class="google-focus-select tactical-select">
+                <option value="web"${activeFocus === 'web' ? ' selected' : ''}>Web Global</option>
+                <option value="secops"${activeFocus === 'secops' ? ' selected' : ''}>SecOps / CVE</option>
+                <option value="code"${activeFocus === 'code' ? ' selected' : ''}>Code / Docs</option>
+                <option value="academic"${activeFocus === 'academic' ? ' selected' : ''}>Academic</option>
+                <option value="hybrid"${activeFocus === 'hybrid' ? ' selected' : ''}>Híbrido (Local + Web)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="composer-meta-group">
+            <!-- 4. Seletor Dinâmico de LLM (Ollama / Local) -->
+            <div class="model-selector-wrap tactical-control-pill pill-model" title="Selecionar modelo LLM do Ollama para esta pesquisa">
+              <svg class="tactical-pill-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="4" y="4" width="16" height="16" rx="2"></rect>
+                <rect x="9" y="9" width="6" height="6"></rect>
+                <path d="M15 2v2"></path>
+                <path d="M15 20v2"></path>
+                <path d="M2 15h2"></path>
+                <path d="M2 9h2"></path>
+                <path d="M20 15h2"></path>
+                <path d="M20 9h2"></path>
+                <path d="M9 2v2"></path>
+                <path d="M9 20v2"></path>
+              </svg>
+              <label for="model-select" class="tactical-pill-kicker">LLM</label>
+              <select id="model-select" name="model" class="google-model-select tactical-select" data-active-model="${escapeHtml(selectedModelName)}">
+                ${modelOptionsHtml}
+              </select>
+            </div>
+
+            <button
+              type="button"
+              id="feeling-lucky-btn"
+              class="g-btn g-btn-lucky tactical-lucky-btn"
+              title="Executar consulta técnica aleatória (Root Dork)"
+              data-lucky-queries="Como funcionam rootkits de kernel Linux via ftrace e como detectá-los?|Quais técnicas o Mozilla Readability usa para limpar o DOM de páginas web?|Como funcionam Server-Sent Events (SSE) sobre HTTP e por que são ideais para streaming?|Arquitetura interna do motor V8 no Node.js e gerenciamento de memória do undici"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="16 3 21 3 21 8"></polyline>
+                <line x1="4" y1="20" x2="21" y2="3"></line>
+                <polyline points="21 16 21 21 16 21"></polyline>
+                <line x1="15" y1="15" x2="21" y2="21"></line>
+                <line x1="4" y1="4" x2="9" y2="9"></line>
+              </svg>
+              <span>Estou com sorte</span>
+            </button>
+
+            <span class="composer-hint">
+              <kbd>Enter</kbd> busca · <kbd>Shift+Enter</kbd> linha
+            </span>
+          </div>
         </div>
       </form>
     </div>
@@ -1111,6 +1187,7 @@ module.exports = {
   escapeHtml,
   renderDeepEvilLogo,
   renderDeepEvilDIcon,
+  renderTopSourcesStrip,
   extractKeyConceptsFromTurn,
   buildContextualFollowUps,
   renderAnswerMarkdownWithFootnotes,

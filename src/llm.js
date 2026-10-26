@@ -224,7 +224,7 @@ async function listOllamaModels({ env = process.env, requestFn = request } = {})
  * Gera a instrução de sistema estrita exigindo resposta baseada apenas nos trechos
  * extraídos e citações no formato [1][2].
  */
-function buildSystemPrompt(validSourceCount) {
+function buildSystemPrompt(validSourceCount, searchLang = '') {
   if (validSourceCount <= 0) {
     return [
       'Você é o DeepEvil, um mecanismo de pesquisa global (Worldwide Research Engine) factual e rigoroso.',
@@ -233,11 +233,15 @@ function buildSystemPrompt(validSourceCount) {
     ].join(' ');
   }
 
+  const targetLangLabel = searchLang && SUPPORTED_TRANSLATION_LANGUAGES[searchLang]
+    ? SUPPORTED_TRANSLATION_LANGUAGES[searchLang]
+    : 'o MESMO IDIOMA da pergunta do usuário';
+
   return [
     'Você é o DeepEvil, um mecanismo de pesquisa técnica e científica global (Worldwide Research Engine) de alta precisão.',
     'REGRAS OBRIGATÓRIAS DE SÍNTESE E COERÊNCIA (JANELA DE CONTEXTO DE 32K TOKENS):',
     '1. FOCO DIRETO E COERÊNCIA 100% COM A PERGUNTA ATUAL: Responda exatamente ao que o usuário perguntou logo no primeiro parágrafo, sem rodeios, sem moralismo, sem introduções genéricas e sem desviar do núcleo técnico/científico solicitado.',
-    '2. SÍNTESE MULTI-POLAR BALANCEADA (🇺🇸 EUA/EN + 🇨🇳 CHINA/ZH + 🇷🇺 RÚSSIA/RU + 🇧🇷 BRASIL/PT -> IDIOMA DO USUÁRIO): Os trechos numerados [1]..[N] provêm da Federação Geopolítica Multi-Polo (EUA: ArXiv/OpenAlex US/HN/SWE-bench; China: OpenAlex CN/Tsinghua/Shanghai AI Lab/OpenCompass/DeepSeek/Qwen/Wikipedia ZH; Rússia: Habr/OpenAlex RU/ISP RAS/MIPT/Wikipedia RU; Brasil/Português: OpenAlex BR/USP/UNICAMP/Wikipedia PT). Traduza, compare e integre ativamente os benchmarks, arquiteturas, artigos e descobertas dos 4 polos diretamente para o idioma da pergunta do usuário, citando as fontes de cada polo ([1][2][3]...).',
+    `2. SÍNTESE MULTI-POLAR GLOBAL SEM BARREIRAS (🇺🇸 EUA + 🇨🇳 CHINA + 🇩🇪 ALEMANHA + 🇯🇵 JAPÃO + 🇰🇷 COREIA DO SUL + 🇷🇺 RÚSSIA + 🇧🇷 BRASIL -> ${targetLangLabel}): Os trechos numerados [1]..[N] provêm da Federação Geopolítica Multi-Polo (EUA: MIT/Stanford/ArXiv/OpenAlex US; China: Tsinghua/CAS/DeepSeek/Qwen/OpenAlex CN/Wikipedia ZH; Alemanha: Max Planck/Fraunhofer/TUM/DFKI/OpenAlex DE/Wikipedia DE; Japão: RIKEN/UTokyo/NII/OpenAlex JP/Wikipedia JA; Coreia do Sul: KAIST/SNU/NAVER AI/OpenAlex KR/Wikipedia KO; Rússia: Habr/ISP RAS/MIPT/OpenAlex RU/Wikipedia RU; Brasil: USP/UNICAMP/OpenAlex BR/Wikipedia PT). Traduza, compare e integre ativamente os benchmarks, arquiteturas, artigos e descobertas dos 7 polos diretamente para ${targetLangLabel}, citando as fontes de cada polo ([1][2][3]...).`,
     '3. ISOLAMENTO ESTRITO DAS FONTES ATUAIS (ZERO AUTO-REFERÊNCIA): Baseie 100% dos fatos técnicos, protocolos, parâmetros, arquiteturas e números exclusivamente nos trechos [1]..[N] fornecidos NESTE turno. JAMAIS misture conceitos de turnos anteriores e NUNCA cite "Erik Tonon" ou o próprio nome do motor como autor de pesquisas externas.',
     '4. CITAÇÕES INLINE OBRIGATÓRIAS: Inclua citações imediatamente após cada fato, data, número ou afirmação técnica usando estritamente colchetes individuais, como [1] ou [1][2]. Nunca agrupe com vírgula como [1, 2] e nunca envolva citações em itálico/parênteses como ([1]); escreva sempre [1][2].',
     `5. INTERVALO VÁLIDO DE CITAÇÃO: Cite APENAS números entre [1] e [${validSourceCount}]. Nunca cite uma fonte fora desse intervalo.`,
@@ -245,7 +249,7 @@ function buildSystemPrompt(validSourceCount) {
     '   - Comece DIRETAMENTE com um parágrafo de síntese executiva denso e completo respondendo à pergunta, destacando termos técnicos, protocolos, algoritmos, números e entidades críticas em **negrito**, seguidos das citações [1].',
     '   - Desenvolva a resposta em múltiplas subseções técnicas aprofundadas com cabeçalhos Markdown (`##`) específicos do tema pesquisado (NÃO use rótulos genéricos repetitivos como "Trecho-chave:" ou "Defesa prática:").',
     '   - Explore os detalhes técnicos presentes nas fontes: explique mecanismos internos, fluxos de protocolo, parâmetros de configuração, trade-offs de performance e exemplos arquiteturais usando listas (`- **Conceito**: explicação detalhada... [1]`) e tabelas comparativas Markdown (`| Componente | Mecanismo | Impacto |`) quando apropriado.',
-    '7. IDIOMA NATIVO E VOCABULÁRIO PRECISO: Redija 100% da resposta e dos cabeçalhos (`##`) no MESMO IDIOMA da pergunta do usuário com ortografia e terminologia técnica impecáveis, mantendo siglas e identificadores de código universais.'
+    `7. IDIOMA NATIVO E VOCABULÁRIO PRECISO: Redija 100% da resposta e dos cabeçalhos (\`##\`) em ${targetLangLabel} com ortografia e terminologia técnica impecáveis, mantendo siglas e identificadores de código universais.`
   ].join('\n');
 }
 
@@ -270,7 +274,7 @@ function summarizePriorTurnContext(priorTurns = []) {
 /**
  * Monta o prompt do turno atual com os trechos legíveis numerados [1]..[N].
  */
-function buildUserPromptWithExcerpts(question, sources = [], priorTurns = []) {
+function buildUserPromptWithExcerpts(question, sources = [], priorTurns = [], searchLang = '') {
   if (!sources || sources.length === 0) {
     return [
       'Nenhuma página pôde ser obtida e extraída com sucesso para esta pergunta.',
@@ -296,17 +300,20 @@ function buildUserPromptWithExcerpts(question, sources = [], priorTurns = []) {
     .join('\n\n---\n\n');
 
   const priorContextBlock = summarizePriorTurnContext(priorTurns);
+  const langInstruction = searchLang && SUPPORTED_TRANSLATION_LANGUAGES[searchLang]
+    ? `em ${SUPPORTED_TRANSLATION_LANGUAGES[searchLang]}`
+    : 'no idioma da pergunta do usuário';
 
   return [
     priorContextBlock,
-    'FONTES GLOBAIS EXTRAÍDAS COM SUCESSO PARA ESTE TURNO (PESQUISA WORLDWIDE):',
+    'FONTES GLOBAIS EXTRAÍDAS COM SUCESSO PARA ESTE TURNO (PESQUISA WORLDWIDE MULTI-POLAR):',
     '',
     formattedExcerpts,
     '',
     '============================================================',
     `PERGUNTA ATUAL DO USUÁRIO: ${String(question || '').trim()}`,
     '',
-    `Instrução Crítica: Elabore uma síntese técnica completa, densa, bem estruturada e 100% focada na PERGUNTA ATUAL DO USUÁRIO utilizando exclusivamente os fatos das fontes [1] a [${sources.length}] acima (traduzindo conceitos do inglês para o idioma da pergunta do usuário). Cite cada afirmação técnica com [1][2].`
+    `Instrução Crítica: Elabore uma síntese técnica completa, densa, bem estruturada e 100% focada na PERGUNTA ATUAL DO USUÁRIO utilizando exclusivamente os fatos das fontes [1] a [${sources.length}] acima (traduzindo e integrando conceitos de todos os países para ${langInstruction}). Cite cada afirmação técnica com [1][2].`
   ]
     .filter(Boolean)
     .join('\n');
@@ -316,11 +323,11 @@ function buildUserPromptWithExcerpts(question, sources = [], priorTurns = []) {
  * Constrói a mensagem de prompt isolando as citações [1]..[N] do turno atual para
  * evitar contaminação de índices [1][2] e repetição de vocabulário de turnos passados.
  */
-function buildConversationMessages(priorTurns = [], currentQuestion = '', currentSources = []) {
+function buildConversationMessages(priorTurns = [], currentQuestion = '', currentSources = [], searchLang = '') {
   return [
     {
       role: 'user',
-      content: buildUserPromptWithExcerpts(currentQuestion, currentSources, priorTurns)
+      content: buildUserPromptWithExcerpts(currentQuestion, currentSources, priorTurns, searchLang)
     }
   ];
 }
@@ -378,13 +385,14 @@ async function streamAnswer({
   onDelta,
   env = process.env,
   selectedModel = '',
+  searchLang = '',
   signal = null,
   requestFn = request,
   customStreamFn = null
 }) {
   const config = resolveLlmConfig(env, selectedModel);
-  const systemPrompt = buildSystemPrompt(sources.length);
-  const messages = buildConversationMessages(priorTurns, question, sources);
+  const systemPrompt = buildSystemPrompt(sources.length, searchLang);
+  const messages = buildConversationMessages(priorTurns, question, sources, searchLang);
 
   if (typeof customStreamFn === 'function') {
     let rawAccumulated = '';
@@ -725,8 +733,12 @@ const SUPPORTED_TRANSLATION_LANGUAGES = {
   'pt-BR': 'Português do Brasil (pt-BR)',
   en: 'English (en-US)',
   es: 'Español (es)',
-  fr: 'Français (fr)',
-  de: 'Deutsch (de)'
+  de: 'Deutsch (de)',
+  ja: '日本語 / Japanese (ja)',
+  ko: '한국어 / Korean (ko)',
+  zh: '简体中文 / Chinese (zh-CN)',
+  ru: 'Русский / Russian (ru)',
+  fr: 'Français (fr)'
 };
 
 /**

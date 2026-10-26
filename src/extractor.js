@@ -202,7 +202,7 @@ async function extractReadablePage(targetUrl, fallbackTitle = '', options = {}) 
     const excerpt = clipAtBoundary(rawText, maxChars);
     const words = excerpt.split(/\s+/).filter(Boolean);
     const domain = parsedUrl.hostname.replace(/^www\./i, '');
-    const poleMatch = String(fallbackTitle || '').match(/^(\[(?:🇺🇸|🇨🇳|🇷🇺|🇧🇷|🌍)[^\]]+\])\s*/);
+    const poleMatch = String(fallbackTitle || '').match(/^(\[(?:🇺🇸|🇨🇳|🇩🇪|🇯🇵|🇰🇷|🇷🇺|🇧🇷|🌍)[^\]]+\])\s*/);
     const extractedCandidate = String(article?.title || '').replace(/\s+/g, ' ').trim();
     const rawExtractedTitle = (extractedCandidate.length >= 15 ? extractedCandidate : String(fallbackTitle || extractedCandidate || domain)).replace(/\s+/g, ' ').trim();
     const title = poleMatch && !rawExtractedTitle.startsWith('[')
@@ -284,9 +284,9 @@ async function extractTopSources(searchResults = [], options = {}) {
     };
   }
 
-  const defaultEarlyCutoff = candidates.length > 6 ? 7 : 4;
+  const defaultEarlyCutoff = candidates.length > 6 ? 8 : 4;
   const earlyCutoffCount = Number(options.earlyCutoffCount ?? defaultEarlyCutoff);
-  const gracePeriodMs = Number(options.gracePeriodMs ?? 1200);
+  const gracePeriodMs = Number(options.gracePeriodMs ?? 1500);
   const allowSnippetFallback = options.allowSnippetFallback !== false;
   const maxChars = Number(options.maxChars || process.env.MAX_CHARS_PER_SOURCE || DEFAULT_MAX_CHARS);
 

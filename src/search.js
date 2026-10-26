@@ -24,7 +24,7 @@ const DEFAULT_SEARXNG_URL = 'http://127.0.0.1:8888';
 const DUCKDUCKGO_HTML_ENDPOINT = 'https://html.duckduckgo.com/html/';
 const BING_HTML_ENDPOINT = 'https://www.bing.com/search';
 const MAX_RESULTS = 6;
-const MULTI_POLAR_RESULTS_COUNT = 9;
+const MULTI_POLAR_RESULTS_COUNT = 10;
 const GLOBAL_ACCEPT_LANGUAGE = 'en-US,en;q=0.9,*;q=0.8';
 
 /**
@@ -70,8 +70,21 @@ const LOW_SIGNAL_DOMAINS = [
 const HIGH_SIGNAL_DOMAINS = [
   'en.wikipedia.org',
   'zh.wikipedia.org',
+  'de.wikipedia.org',
+  'ja.wikipedia.org',
+  'ko.wikipedia.org',
   'ru.wikipedia.org',
   'pt.wikipedia.org',
+  'mpg.de',
+  'fraunhofer.de',
+  'dfki.de',
+  'bsi.bund.de',
+  'riken.jp',
+  'nii.ac.jp',
+  'u-tokyo.ac.jp',
+  'kaist.ac.kr',
+  'snu.ac.kr',
+  'etri.re.kr',
   'scielo.br',
   'palantir.com',
   'arxiv.org',
@@ -304,8 +317,8 @@ function toGlobalResearchQuery(rawQuery) {
 }
 
 /**
- * Gera consultas nativas Multi-Polo (🇺🇸 Estados Unidos / Inglês Global, 🇨🇳 China / Chinês Simplificado,
- * 🇷🇺 Rússia / Russo Técnico e 🇧🇷 Brasil / Português Técnico & Acadêmico) para equilibrar os 4 polos.
+ * Gera consultas nativas Multi-Polo nos 7 grandes centros tecnológicos e científicos mundiais:
+ * 🇺🇸 EUA (EN), 🇨🇳 China (ZH), 🇩🇪 Alemanha (DE), 🇯🇵 Japão (JA), 🇰🇷 Coreia do Sul (KO), 🇷🇺 Rússia (RU) e 🇧🇷 Brasil (PT).
  */
 function buildMultiPolarQueries(rawQuery) {
   const enBase = toGlobalResearchQuery(rawQuery);
@@ -321,8 +334,14 @@ function buildMultiPolarQueries(rawQuery) {
   let usQuery = enBase;
   let academicCore = enBase;
   let cnTerms = [];
+  let deTerms = [];
+  let jpTerms = [];
+  let krTerms = [];
   let ruTerms = [];
   let cnWikiCustom = '';
+  let deWikiCustom = '';
+  let jpWikiCustom = '';
+  let krWikiCustom = '';
   let ruWikiCustom = '';
   let brQuery = strippedPt || enBase;
   let brWiki = strippedPt || enBase;
@@ -335,8 +354,14 @@ function buildMultiPolarQueries(rawQuery) {
       usQuery = 'Palantir Foundry AIP Ontology enterprise AI knowledge graph architecture';
       academicCore = 'enterprise ontology knowledge graph large language model AI decision making';
       cnTerms.push('Palantir', 'Foundry', 'AIP', '本体', '知识图谱', '企业级AI', '语义层');
+      deTerms.push('Palantir Foundry', 'Ontologie Informatik', 'Wissensgraph', 'Künstliche Intelligenz');
+      jpTerms.push('Palantir', 'オントロジー', 'ナレッジグラフ', '知識グラフ', '人工知能');
+      krTerms.push('Palantir', '온톨로지', '지식 그래프', '인공지능');
       ruTerms.push('Palantir', 'Foundry', 'онтология данных', 'граф знаний', 'ИИ', 'архитектура');
       cnWikiCustom = 'Palantir OR 知识图谱 OR 本体_(信息科学)';
+      deWikiCustom = 'Palantir_Technologies OR Ontologie_(Informatik) OR Wissensgraph';
+      jpWikiCustom = 'パランティア・テクノロジーズ OR オントロジー_(情報科学) OR ナレッジグラフ';
+      krWikiCustom = '팔란티어_테크놀로지스 OR 온톨로지 OR 지식_그래프';
       ruWikiCustom = 'Palantir OR Онтология_(информатика) OR Граф_знаний';
       brQuery = 'Palantir Foundry AIP ontologia de dados inteligência artificial grafo de conhecimento';
       brWiki = 'Palantir Technologies OR "Ontologia (ciência da computação)"';
@@ -344,8 +369,14 @@ function buildMultiPolarQueries(rawQuery) {
       usQuery = `${enBase} ontology knowledge graph semantic model AI`.trim();
       academicCore = 'ontology knowledge graph artificial intelligence semantic reasoning LLM';
       cnTerms.push('本体论', '知识图谱', '语义建模', '人工智能', '大模型');
+      deTerms.push('Ontologie Informatik', 'Wissensgraph', 'Semantisches Netz', 'Künstliche Intelligenz');
+      jpTerms.push('オントロジー', 'ナレッジグラフ', '知識グラフ', '人工知能');
+      krTerms.push('온톨로지', '지식 그래프', '시맨틱 웹', '인공지능');
       ruTerms.push('онтология', 'граф знаний', 'семантическая модель', 'искусственный интеллект');
       cnWikiCustom = '本体_(信息科学) OR 知识图谱';
+      deWikiCustom = 'Ontologie_(Informatik) OR Wissensgraph';
+      jpWikiCustom = 'オントロジー_(情報科学) OR ナレッジグラフ';
+      krWikiCustom = '온톨로지 OR 지식_그래프';
       ruWikiCustom = 'Онтология_(информатика) OR Граф_знаний';
       brQuery = 'ontologia ciência da computação inteligência artificial grafo de conhecimento';
       brWiki = '"Ontologia (ciência da computação)" OR "Grafo de conhecimento"';
@@ -354,8 +385,14 @@ function buildMultiPolarQueries(rawQuery) {
     usQuery = `${enBase} SWE-bench LiveBench LMSYS evaluation`.trim();
     academicCore = 'large language model code generation software engineering benchmark evaluation';
     cnTerms.push('大模型', '编程', '代码生成', '评测', '基准', 'DeepSeek', 'Qwen', 'OpenCompass');
+    deTerms.push('Großes Sprachmodell', 'Künstliche Intelligenz', 'Programmierung', 'Benchmark');
+    jpTerms.push('大規模言語モデル', '生成AI', 'プログラミング', 'ベンチマーク');
+    krTerms.push('대규모 언어 모델', '생성형 인공지능', '코드 생성', '벤치마크');
     ruTerms.push('большие языковые модели', 'LLM', 'программирование', 'бенчмарк', 'MERA', 'YandexGPT', 'GigaChat');
     cnWikiCustom = '大语言模型 OR DeepSeek OR 通义千问';
+    deWikiCustom = 'Großes_Sprachmodell OR Künstliche_Intelligenz';
+    jpWikiCustom = '大規模言語モデル OR 生成的人工知能';
+    krWikiCustom = '대규모_언어_모델 OR 생성형_인공지능';
     ruWikiCustom = 'Большая_языковая_модель OR GigaChat OR YandexGPT';
     brQuery = 'modelos de inteligência artificial programação desenvolvimento de software LLM benchmark';
     brWiki = 'Grande modelo de linguagem';
@@ -363,29 +400,66 @@ function buildMultiPolarQueries(rawQuery) {
   if (/\b(3d|cad|modeling|mesh|sculpting|blender|freecad)\b/i.test(lower)) {
     academicCore = '3D CAD modeling geometric kernel open source mesh generation';
     cnTerms.push('开源', '三维建模', 'CAD', '几何内核', '渲染引擎');
+    deTerms.push('3D-Modellierung', 'CAD', 'Freie Software', 'Computergrafik');
+    jpTerms.push('3DCGソフトウェア', '3次元コンピュータグラフィックス', 'CAD', 'オープンソース');
+    krTerms.push('3차원 모델링', '컴퓨터 지원 설계', '오픈 소스', '블렌더');
     ruTerms.push('3D моделирование', 'САПР', 'открытый исходный код', 'геометрическое ядро', 'OpenCASCADE');
     cnWikiCustom = '三维建模 OR Blender OR FreeCAD';
+    deWikiCustom = '3D-Modellierung OR Blender_(Software) OR FreeCAD';
+    jpWikiCustom = '3DCGソフトウェア OR Blender OR FreeCAD';
+    krWikiCustom = '3차원_모델링 OR 블렌더_(소프트웨어) OR 프리캐드';
     ruWikiCustom = 'Трёхмерная_графика OR Blender OR FreeCAD';
     brQuery = 'modelagem 3D código aberto CAD Blender FreeCAD computação gráfica';
     brWiki = '"Modelagem 3D" OR Blender OR FreeCAD';
   }
   if (/\b(nuclear|fission|fusion|reactor)\b/i.test(lower)) {
     cnTerms.push('核反应堆', '核裂变', '核聚变', '反应堆物理');
+    deTerms.push('Kernreaktor', 'Kernspaltung', 'Kernfusion', 'Reaktorphysik');
+    jpTerms.push('原子炉', '核分裂反応', '核融合炉', '原子力工学');
+    krTerms.push('원자로', '핵분열', '핵융합', '원자력');
     ruTerms.push('ядерный реактор', 'деление ядра', 'термоядерный синтез', 'ВВЭР', 'Росатом');
     cnWikiCustom = '核反应堆 OR 核裂变';
+    deWikiCustom = 'Kernreaktor OR Kernspaltung';
+    jpWikiCustom = '原子炉 OR 核分裂反応';
+    krWikiCustom = '원자로 OR 핵분열';
     ruWikiCustom = 'Ядерный_реактор OR Деление_ядра';
     brWiki = '"Reator nuclear" OR "Fissão nuclear"';
   }
-  if (/\b(security|vulnerability|cve|exploit|reverse\s+engineering|cybersecurity|attack)\b/i.test(lower)) {
+  if (/\b(security|vulnerability|cve|exploit|reverse\s+engineering|cybersecurity|attack|rootkit)\b/i.test(lower)) {
     cnTerms.push('漏洞分析', '安全研究', '渗透测试', '逆向工程');
+    deTerms.push('Informationssicherheit', 'Sicherheitslücke', 'Exploit', 'Reverse_Engineering');
+    jpTerms.push('コンピュータセキュリティ', '脆弱性', 'リバースエンジニアリング');
+    krTerms.push('컴퓨터 보안', '취약점', '역공학', '익스플로잇');
     ruTerms.push('уязвимость', 'эксплойт', 'информационная безопасность', 'реверс-инжиниринг');
+    deWikiCustom = deWikiCustom || 'Informationssicherheit OR Exploit';
+    jpWikiCustom = jpWikiCustom || 'コンピュータセキュリティ OR 脆弱性_(コンピュータ)';
+    krWikiCustom = krWikiCustom || '컴퓨터_보안 OR 보안_취약점';
   }
   if (/\b(distributed|consensus|raft|paxos|database|network|kernel|linux)\b/i.test(lower)) {
     cnTerms.push('分布式系统', '共识算法', '高并发架构', '内核', '性能基准');
+    deTerms.push('Verteilte Systeme', 'Konsensalgorithmus', 'Linux-Kernel', 'Datenbank');
+    jpTerms.push('分散システム', '合意形成アルゴリズム', 'Linuxカーネル');
+    krTerms.push('분산 컴퓨팅', '합의 알고리즘', '리눅스 커널');
     ruTerms.push('распределенные системы', 'алгоритм консенсуса', 'высоконагруженные системы', 'ядро Linux');
+  }
+  if (/\b(quantum|quântica|quantico|qubit)\b/i.test(lower)) {
+    cnTerms.push('量子计算', '量子比特', '量子纠缠');
+    deTerms.push('Quantencomputer', 'Quanteninformatik', 'Qubit');
+    jpTerms.push('量子コンピュータ', '量子ビット', '量子力学');
+    krTerms.push('양자 컴퓨터', '큐비트', '양자역학');
+    ruTerms.push('квантовый компьютер', 'кубит', 'квантовые вычисления');
+    cnWikiCustom = cnWikiCustom || '量子计算';
+    deWikiCustom = deWikiCustom || 'Quantencomputer';
+    jpWikiCustom = jpWikiCustom || '量子コンピュータ';
+    krWikiCustom = krWikiCustom || '양자_컴퓨터';
+    ruWikiCustom = ruWikiCustom || 'Квантовый_компьютер';
+    brWiki = 'Computador quântico';
   }
   if (/\b(gunpowder|explosive|chemistry|synthesis|napalm)\b/i.test(lower)) {
     cnTerms.push('化学合成', '材料科学', '反应机理', '热力学');
+    deTerms.push('Chemische Synthese', 'Thermodynamik', 'Reaktionsmechanismus');
+    jpTerms.push('化学合成', '熱力学', '反応機構');
+    krTerms.push('화학 합성', '열역학', '반응 메커니즘');
     ruTerms.push('химический синтез', 'термодинамика', 'состав', 'химия');
   }
 
@@ -393,9 +467,19 @@ function buildMultiPolarQueries(rawQuery) {
     .split(/\s+/)
     .filter((w) => w.length >= 2 && !/^(strongest|best|top|sota|current|latest|comparison|synthesis|composition|2026)$/i.test(w))
     .slice(0, 6);
+  const coreJoined = coreTokens.join(' ') || enBase;
 
   if (cnTerms.length === 0) {
     cnTerms.push('技术架构', '基准评测', '学术研究');
+  }
+  if (deTerms.length === 0) {
+    deTerms.push(coreJoined, 'Informatik', 'Architektur');
+  }
+  if (jpTerms.length === 0) {
+    jpTerms.push(coreJoined, 'コンピュータ科学', '技術');
+  }
+  if (krTerms.length === 0) {
+    krTerms.push(coreJoined, '컴퓨터 과학', '아키텍처');
   }
   if (ruTerms.length === 0) {
     ruTerms.push('архитектура', 'бенчмарк', 'технический анализ');
@@ -404,13 +488,19 @@ function buildMultiPolarQueries(rawQuery) {
   return {
     us: usQuery,
     cn: `${cnTerms.slice(0, 8).join(' ')} ${coreTokens.slice(0, 3).join(' ')}`.trim(),
-    cnWiki: cnWikiCustom || `${cnTerms.slice(0, 2).join(' OR ')}`.trim(),
+    cnWiki: cnWikiCustom || `${coreTokens.slice(0, 2).join(' ')} ${cnTerms.slice(0, 2).join(' ')}`.trim(),
+    de: `${deTerms.slice(0, 5).join(' ')} ${coreTokens.slice(0, 3).join(' ')}`.trim(),
+    deWiki: deWikiCustom || coreJoined,
+    jp: `${jpTerms.slice(0, 5).join(' ')} ${coreTokens.slice(0, 3).join(' ')}`.trim(),
+    jpWiki: jpWikiCustom || `${coreTokens.slice(0, 2).join(' ')} ${jpTerms[0] || ''}`.trim(),
+    kr: `${krTerms.slice(0, 5).join(' ')} ${coreTokens.slice(0, 3).join(' ')}`.trim(),
+    krWiki: krWikiCustom || `${coreTokens.slice(0, 2).join(' ')} ${krTerms[0] || ''}`.trim(),
     ru: `${ruTerms.slice(0, 7).join(' ')} ${coreTokens.slice(0, 3).join(' ')}`.trim(),
-    ruWiki: ruWikiCustom || `${ruTerms.slice(0, 2).join(' OR ')}`.trim(),
+    ruWiki: ruWikiCustom || `${coreTokens.slice(0, 2).join(' ')} ${ruTerms.slice(0, 2).join(' ')}`.trim(),
     br: brQuery,
     brWiki,
-    enCore: coreTokens.join(' ') || enBase,
-    academicCore: academicCore || coreTokens.join(' ') || enBase
+    enCore: coreJoined,
+    academicCore: academicCore || coreJoined
   };
 }
 
@@ -445,21 +535,41 @@ const FOCUS_MODES = {
 const SEARCH_SCOPES = {
   global: {
     id: 'global',
-    label: '🌍 Global (US+CN+RU+BR)'
+    label: 'Global · 7 Polos (US·CN·DE·JP·KR·RU·BR)'
   },
   external: {
     id: 'external',
-    label: '🌐 Só Externo (US+CN+RU)'
+    label: 'Só Externo (US·CN·DE·JP·KR·RU)'
   },
   brazil: {
     id: 'brazil',
-    label: '🇧🇷 Só Brasil (PT-BR)'
+    label: 'Só Brasil (PT-BR)'
   }
 };
 
 function normalizeSearchScope(rawScope = 'global') {
   const clean = String(rawScope || 'global').trim().toLowerCase();
   return SEARCH_SCOPES[clean] ? clean : 'global';
+}
+
+const SEARCH_LANGUAGES = {
+  'pt-BR': { id: 'pt-BR', label: 'Português (BR)', tl: 'pt', name: 'Português do Brasil (pt-BR)' },
+  en: { id: 'en', label: 'English (US)', tl: 'en', name: 'English (en-US)' },
+  es: { id: 'es', label: 'Español (ES)', tl: 'es', name: 'Español (es)' },
+  de: { id: 'de', label: 'Deutsch (DE)', tl: 'de', name: 'Deutsch (de)' },
+  ja: { id: 'ja', label: '日本語 (JA)', tl: 'ja', name: 'Japanese / 日本語 (ja)' },
+  ko: { id: 'ko', label: '한국어 (KO)', tl: 'ko', name: 'Korean / 한국어 (ko)' },
+  zh: { id: 'zh', label: '中文 (ZH)', tl: 'zh-CN', name: 'Chinese / 简体中文 (zh-CN)' },
+  ru: { id: 'ru', label: 'Русский (RU)', tl: 'ru', name: 'Russian / Русский (ru)' }
+};
+
+function normalizeSearchLang(rawLang = 'pt-BR') {
+  const clean = String(rawLang || 'pt-BR').trim();
+  if (SEARCH_LANGUAGES[clean]) return clean;
+  const lower = clean.toLowerCase();
+  if (lower === 'pt' || lower === 'pt-br' || lower === 'pt_br') return 'pt-BR';
+  const match = Object.keys(SEARCH_LANGUAGES).find((k) => k.toLowerCase() === lower);
+  return match || 'pt-BR';
 }
 
 /**
@@ -1069,14 +1179,17 @@ async function searchWikipediaByLang(query, lang = 'en', {
 }
 
 /**
- * Seleciona um conjunto geograficamente balanceado entre os 4 polos:
- * 🇺🇸 US (Inglês/EUA), 🇨🇳 CN (China), 🇷🇺 RU (Rússia) e 🇧🇷 BR (Brasil / Português Técnico & Acadêmico),
- * garantindo representatividade de cada país e bloqueando fazendas de conteúdo escolar raso (`LOW_SIGNAL_DOMAINS`).
+ * Seleciona um conjunto geograficamente balanceado entre os 7 grandes polos tecnológicos mundiais:
+ * 🇺🇸 US (EUA), 🇨🇳 CN (China), 🇩🇪 DE (Alemanha), 🇯🇵 JP (Japão), 🇰🇷 KR (Coreia do Sul), 🇷🇺 RU (Rússia) e 🇧🇷 BR (Brasil),
+ * garantindo representatividade internacional sem barreiras geográficas e bloqueando fazendas escolares rasas (`LOW_SIGNAL_DOMAINS`).
  */
 function selectMultiPolarTopResults({
   directCandidates = [],
   usPool = [],
   cnPool = [],
+  dePool = [],
+  jpPool = [],
+  krPool = [],
   ruPool = [],
   brPool = [],
   globalPool = []
@@ -1152,6 +1265,9 @@ function selectMultiPolarTopResults({
   const filterCheckQuery = effectiveScope === 'external' ? '' : query;
   const usQueue = usPool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, filterCheckQuery)).map((x) => withPoleBadge(x, '[🇺🇸 US]', 'US'));
   const cnQueue = cnPool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, filterCheckQuery)).map((x) => withPoleBadge(x, '[🇨🇳 CN]', 'CN'));
+  const deQueue = dePool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, filterCheckQuery)).map((x) => withPoleBadge(x, '[🇩🇪 DE]', 'DE'));
+  const jpQueue = jpPool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, filterCheckQuery)).map((x) => withPoleBadge(x, '[🇯🇵 JP]', 'JP'));
+  const krQueue = krPool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, filterCheckQuery)).map((x) => withPoleBadge(x, '[🇰🇷 KR]', 'KR'));
   const ruQueue = ruPool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, filterCheckQuery)).map((x) => withPoleBadge(x, '[🇷🇺 RU]', 'RU'));
   // No modo 'external' (Só Externo), desativa completamente a fila BR
   const brQueue = effectiveScope === 'external'
@@ -1159,17 +1275,35 @@ function selectMultiPolarTopResults({
     : brPool.filter((x) => !isLowSignalResult(x)).map((x) => withPoleBadge(x, '[🇧🇷 BR]', 'BR'));
   const glQueue = globalPool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, filterCheckQuery)).map((x) => withPoleBadge(x, '[🌍 GLOBAL]', 'GLOBAL'));
 
-  // Intercala em round-robin estrito:
-  // - 'global':   🇺🇸 US -> 🇨🇳 CN -> 🇷🇺 RU -> 🇧🇷 BR (4 Polos Balanceados)
-  // - 'external': 🇺🇸 US -> 🇨🇳 CN -> 🇷🇺 RU (3 Polos Internacionais, 0% Brasil)
+  // Intercala em round-robin estrito pelos 7 grandes polos:
+  // - 'global':   🇺🇸 US -> 🇨🇳 CN -> 🇩🇪 DE -> 🇯🇵 JP -> 🇰🇷 KR -> 🇷🇺 RU -> 🇧🇷 BR
+  // - 'external': 🇺🇸 US -> 🇨🇳 CN -> 🇩🇪 DE -> 🇯🇵 JP -> 🇰🇷 KR -> 🇷🇺 RU (0% Brasil)
   let cursor = 0;
-  const maxCursor = Math.max(usQueue.length, cnQueue.length, ruQueue.length, brQueue.length, glQueue.length);
+  const maxCursor = Math.max(
+    usQueue.length,
+    cnQueue.length,
+    deQueue.length,
+    jpQueue.length,
+    krQueue.length,
+    ruQueue.length,
+    brQueue.length,
+    glQueue.length
+  );
   while (finalResults.length < totalCount && cursor < maxCursor) {
     if (cursor < usQueue.length && finalResults.length < totalCount && canAccept(usQueue[cursor], false)) {
       finalResults.push(usQueue[cursor]);
     }
     if (cursor < cnQueue.length && finalResults.length < totalCount && canAccept(cnQueue[cursor], false)) {
       finalResults.push(cnQueue[cursor]);
+    }
+    if (cursor < deQueue.length && finalResults.length < totalCount && canAccept(deQueue[cursor], false)) {
+      finalResults.push(deQueue[cursor]);
+    }
+    if (cursor < jpQueue.length && finalResults.length < totalCount && canAccept(jpQueue[cursor], false)) {
+      finalResults.push(jpQueue[cursor]);
+    }
+    if (cursor < krQueue.length && finalResults.length < totalCount && canAccept(krQueue[cursor], false)) {
+      finalResults.push(krQueue[cursor]);
     }
     if (cursor < ruQueue.length && finalResults.length < totalCount && canAccept(ruQueue[cursor], false)) {
       finalResults.push(ruQueue[cursor]);
@@ -1192,8 +1326,8 @@ function selectMultiPolarTopResults({
 
 /**
  * Executa a Federação Geopolítica Multi-Polo em paralelo respeitando o `searchScope`:
- * - `global`:   4 polos balanceados (🇺🇸 US + 🇨🇳 CN + 🇷🇺 RU + 🇧🇷 BR)
- * - `external`: 3 polos internacionais (🇺🇸 US + 🇨🇳 CN + 🇷🇺 RU, zero Brasil/PT)
+ * - `global`:   7 polos mundiais (🇺🇸 US + 🇨🇳 CN + 🇩🇪 DE + 🇯🇵 JP + 🇰🇷 KR + 🇷🇺 RU + 🇧🇷 BR)
+ * - `external`: 6 polos internacionais (🇺🇸 US + 🇨🇳 CN + 🇩🇪 DE + 🇯🇵 JP + 🇰🇷 KR + 🇷🇺 RU, zero Brasil/PT)
  * - `brazil`:   100% Brasil / Português Técnico & Acadêmico (🇧🇷 BR: Wikipedia PT + OpenAlex BR + Bing/DDG PT-BR)
  */
 async function collectMultiPolarFederation(query, {
@@ -1256,6 +1390,15 @@ async function collectMultiPolarFederation(query, {
     cnOpenAlex,
     cnWiki,
     cnGitHub,
+    // 🇩🇪 Polo Alemanha (OpenAlex Germany + Wikipedia DE — Max Planck, Fraunhofer, TUM, DFKI)
+    deOpenAlex,
+    deWiki,
+    // 🇯🇵 Polo Japão (OpenAlex Japan + Wikipedia JA — RIKEN, UTokyo, KyotoU, NII)
+    jpOpenAlex,
+    jpWiki,
+    // 🇰🇷 Polo Coreia do Sul (OpenAlex South Korea + Wikipedia KO — KAIST, SNU, NAVER AI, ETRI)
+    krOpenAlex,
+    krWiki,
     // 🇷🇺 Polo Rússia (Habr RU + OpenAlex Russia + Wikipedia RU)
     ruHabr,
     ruOpenAlex,
@@ -1272,9 +1415,18 @@ async function collectMultiPolarFederation(query, {
     searchWikipediaByLang(poles.enCore, 'en', { httpRequest, timeoutMs: 4000, count: 2, countryPole: 'US', countryBadge: '[🇺🇸 US]' }),
     searchBingHtml(poles.us, { httpRequest, timeoutMs: 4500, count: 3, searchScope: 'external' }),
     // China Pole
-    searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 4500, count: 4, countryCode: 'CN', countryPole: 'CN', countryBadge: '[🇨🇳 CN]' }),
-    searchWikipediaByLang(poles.cnWiki, 'zh', { httpRequest, timeoutMs: 4000, count: 3, countryPole: 'CN', countryBadge: '[🇨🇳 CN]' }),
+    searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 4500, count: 3, countryCode: 'CN', countryPole: 'CN', countryBadge: '[🇨🇳 CN]' }),
+    searchWikipediaByLang(poles.cnWiki, 'zh', { httpRequest, timeoutMs: 4000, count: 2, countryPole: 'CN', countryBadge: '[🇨🇳 CN]' }),
     searchGitHubGlobal(poles.enCore, { httpRequest, timeoutMs: 4000, count: wantsGitHub ? 5 : 2 }),
+    // Germany Pole
+    searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 4500, count: 3, countryCode: 'DE', countryPole: 'DE', countryBadge: '[🇩🇪 DE]' }),
+    searchWikipediaByLang(poles.deWiki, 'de', { httpRequest, timeoutMs: 4000, count: 2, countryPole: 'DE', countryBadge: '[🇩🇪 DE]' }),
+    // Japan Pole
+    searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 4500, count: 3, countryCode: 'JP', countryPole: 'JP', countryBadge: '[🇯🇵 JP]' }),
+    searchWikipediaByLang(poles.jpWiki, 'ja', { httpRequest, timeoutMs: 4000, count: 2, countryPole: 'JP', countryBadge: '[🇯🇵 JP]' }),
+    // South Korea Pole
+    searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 4500, count: 3, countryCode: 'KR', countryPole: 'KR', countryBadge: '[🇰🇷 KR]' }),
+    searchWikipediaByLang(poles.krWiki, 'ko', { httpRequest, timeoutMs: 4000, count: 2, countryPole: 'KR', countryBadge: '[🇰🇷 KR]' }),
     // Russia Pole
     searchHabrRussia(poles.ru, { httpRequest, timeoutMs: 4500, count: 3, fallbackQuery: poles.enCore }),
     searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 4500, count: 3, countryCode: 'RU', countryPole: 'RU', countryBadge: '[🇷🇺 RU]' }),
@@ -1298,22 +1450,37 @@ async function collectMultiPolarFederation(query, {
     [...cleanExtra, ...usBing],
     usOpenAlex,
     [...usHn, ...usArxiv, ...usWiki]
-  ).slice(0, 8);
+  ).slice(0, 6);
 
   const cnPool = interleaveArrays(
     cnWiki,
     cnOpenAlex,
     wantsGitHub ? [] : cnGitHub
-  ).slice(0, 6);
+  ).slice(0, 5);
+
+  const dePool = interleaveArrays(
+    deOpenAlex,
+    deWiki
+  ).slice(0, 5);
+
+  const jpPool = interleaveArrays(
+    jpOpenAlex,
+    jpWiki
+  ).slice(0, 5);
+
+  const krPool = interleaveArrays(
+    krOpenAlex,
+    krWiki
+  ).slice(0, 5);
 
   const ruPool = interleaveArrays(
     ruHabr,
     ruOpenAlex,
     ruWiki
-  ).slice(0, 6);
+  ).slice(0, 5);
 
   const brPool = includeBrPole
-    ? interleaveArrays(brWiki, brOpenAlex, brExtra).slice(0, 6)
+    ? interleaveArrays(brWiki, brOpenAlex, brExtra).slice(0, 5)
     : [];
 
   return selectMultiPolarTopResults(
@@ -1321,6 +1488,9 @@ async function collectMultiPolarFederation(query, {
       directCandidates: wantsGitHub ? [...directCandidates, ...cnGitHub] : directCandidates,
       usPool,
       cnPool,
+      dePool,
+      jpPool,
+      krPool,
       ruPool,
       brPool,
       globalPool: [...cnGitHub, ...usArxiv]
@@ -1329,6 +1499,145 @@ async function collectMultiPolarFederation(query, {
     query,
     effectiveScope
   );
+}
+
+const headlineTranslationCache = new Map();
+
+/**
+ * Traduz automaticamente os assuntos/headlines (`title`) das fontes extraídas (EUA, China, Alemanha,
+ * Japão, Coreia do Sul, Rússia, Brasil) para o idioma de busca selecionado (`searchLang`),
+ * preservando a bandeira geopolítica (`[🇺🇸 US]`, `[🇨🇳 CN]`, `[🇩🇪 DE]`, `[🇯🇵 JP]`, `[🇰🇷 KR]`, `[🇷🇺 RU]`, `[🇧🇷 BR]`)
+ * e a atribuição final da fonte (`— Wikipedia (JA)`, `— Habr Engineering`, etc.).
+ */
+async function localizeSourceHeadlines(sources = [], targetLang = 'pt-BR', {
+  httpRequest = request,
+  timeoutMs = 5500
+} = {}) {
+  if (!Array.isArray(sources) || sources.length === 0) return [];
+  // Em testes unitários offline que injetam um mock de requestFn para busca/extração, mantém títulos determinísticos
+  if (httpRequest !== request) return sources;
+
+  const langKey = normalizeSearchLang(targetLang);
+  const langSpec = SEARCH_LANGUAGES[langKey] || SEARCH_LANGUAGES['pt-BR'];
+  const tl = langSpec.tl || 'pt';
+
+  const detectSourceLangHint = (text, badgeStr = '') => {
+    if (/[\uac00-\ud7af]/.test(text)) return 'ko';
+    if (/[\u3040-\u30ff]/.test(text)) return 'ja';
+    if (/[\u4e00-\u9fff]/.test(text)) return badgeStr.includes('JP') ? 'ja' : 'zh-CN';
+    if (/[\u0400-\u04ff]/.test(text)) return 'ru';
+    if (/\b(the|and|for|with|using|into|from|towards|survey|benchmarking|unpacking|bridging|decision-making|knowledge|language|models|engineering)\b/i.test(text)) {
+      return 'en';
+    }
+    return 'auto';
+  };
+
+  const translateSingleSource = async (src) => {
+    if (!src || typeof src.title !== 'string') return src;
+    const rawTitle = src.title.trim();
+    if (!rawTitle) return src;
+
+    const badgeMatch = rawTitle.match(/^(\[(?:🇺🇸|🇨🇳|🇩🇪|🇯🇵|🇰🇷|🇷🇺|🇧🇷|🌍)[^\]]+\])\s*/);
+    const badge = badgeMatch ? `${badgeMatch[1]} ` : '';
+    const withoutBadge = badgeMatch ? rawTitle.slice(badgeMatch[0].length).trim() : rawTitle;
+
+    // Protege identificadores de repositório GitHub (ex: "blender/blender — Official mirror of Blender")
+    const repoMatch = withoutBadge.match(/^([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\s+[—-]\s+(.+)$/);
+    const repoPrefix = repoMatch ? `${repoMatch[1]} — ` : '';
+    const textAfterRepo = repoMatch ? repoMatch[2].trim() : withoutBadge;
+
+    // Separa o sufixo de atribuição (ex: " — Wikipedia (ZH)", " — Habr Engineering")
+    const suffixMatch = !repoMatch
+      ? textAfterRepo.match(/(\s+—\s+(?:Wikipedia\s*\([A-Z]{2}\)|Habr(?:\s+Engineering)?|ArXiv\s+Global\s+Preprint|GitHub\s+Repository))$/)
+      : null;
+    const suffix = suffixMatch ? suffixMatch[1] : '';
+    const coreSubject = suffixMatch
+      ? textAfterRepo.slice(0, textAfterRepo.length - suffix.length).trim()
+      : textAfterRepo;
+
+    if (!coreSubject || coreSubject.length < 3 || /^https?:\/\//i.test(coreSubject)) {
+      return src;
+    }
+
+    const sl = detectSourceLangHint(coreSubject, badge);
+    const cacheKey = `${sl}->${tl}::${coreSubject}`;
+    let translatedCore = headlineTranslationCache.get(cacheKey);
+
+    if (!translatedCore) {
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const gtxUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${encodeURIComponent(sl)}&tl=${encodeURIComponent(tl)}&dt=t&q=${encodeURIComponent(coreSubject)}`;
+          const res = await httpRequest(gtxUrl, {
+            method: 'GET',
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/131.0.0.0 Safari/537.36',
+              'Accept': 'application/json'
+            },
+            headersTimeout: timeoutMs,
+            bodyTimeout: timeoutMs
+          });
+          if (res.statusCode === 200) {
+            const payload = await res.body.json();
+            if (Array.isArray(payload?.[0])) {
+              let joined = payload[0]
+                .map((seg) => (Array.isArray(seg) && typeof seg[0] === 'string' ? seg[0] : ''))
+                .join('')
+                .replace(/\bFundi[çc][ãa]o\s+Palantir\b/gi, 'Palantir Foundry')
+                .replace(/\s+/g, ' ')
+                .trim();
+              if (tl === 'pt') {
+                joined = joined
+                  .replace(/\bKnowledge\s+Graphs\b/gi, 'Grafos de Conhecimento')
+                  .replace(/\bKnowledge\s+Graph\b/gi, 'Grafo de Conhecimento')
+                  .replace(/\bLarge\s+Language\s+Models\b/gi, 'Grandes Modelos de Linguagem (LLMs)');
+              }
+              if (joined.length >= 2) {
+                translatedCore = joined;
+                if (headlineTranslationCache.size > 500) {
+                  headlineTranslationCache.clear();
+                }
+                headlineTranslationCache.set(cacheKey, translatedCore);
+                break;
+              }
+            }
+          } else if (res.body && typeof res.body.dump === 'function') {
+            await res.body.dump().catch(() => {});
+          }
+        } catch (_) {
+          // Aguarda breve backoff antes da próxima tentativa
+        }
+        if (attempt < 3) {
+          await new Promise((r) => setTimeout(r, attempt * 180));
+        }
+      }
+    }
+
+    if (!translatedCore) {
+      return src;
+    }
+
+    const newTitle = `${badge}${repoPrefix}${translatedCore}${suffix}`.replace(/\s+/g, ' ').trim();
+    return {
+      ...src,
+      originalTitle: rawTitle,
+      title: newTitle
+    };
+  };
+
+  // Executa em lotes concorrentes de até 4 requisições simultâneas para evitar rate-limit/burst drop
+  const results = new Array(sources.length);
+  const concurrency = Math.min(4, sources.length);
+  let nextIdx = 0;
+
+  const worker = async () => {
+    while (nextIdx < sources.length) {
+      const idx = nextIdx++;
+      results[idx] = await translateSingleSource(sources[idx]);
+    }
+  };
+
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
+  return results;
 }
 
 /**
@@ -1842,6 +2151,9 @@ module.exports = {
   FOCUS_MODES,
   SEARCH_SCOPES,
   normalizeSearchScope,
+  SEARCH_LANGUAGES,
+  normalizeSearchLang,
+  localizeSourceHeadlines,
   LOW_SIGNAL_DOMAINS,
   HIGH_SIGNAL_DOMAINS,
   isExplicitBrazilQuery,

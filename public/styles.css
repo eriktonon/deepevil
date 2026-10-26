@@ -501,13 +501,23 @@ body {
 }
 
 .turn-scope-badge {
-  font-size: 11.5px;
+  font-size: 11px;
   font-family: var(--font-mono);
-  padding: 2px 8px;
+  padding: 2px 9px;
   border-radius: 999px;
-  background-color: rgba(251, 188, 5, 0.12);
-  border: 1px solid rgba(251, 188, 5, 0.4);
+  background-color: rgba(251, 188, 5, 0.10);
+  border: 1px solid rgba(251, 188, 5, 0.35);
   color: var(--g-yellow);
+}
+
+.turn-lang-badge {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  padding: 2px 9px;
+  border-radius: 999px;
+  background-color: rgba(66, 133, 244, 0.12);
+  border: 1px solid rgba(138, 180, 248, 0.35);
+  color: var(--g-blue-light);
 }
 
 .turn-search-query {
@@ -701,6 +711,17 @@ body {
 .top-source-badge {
   color: var(--g-blue-light);
   font-weight: 700;
+}
+
+.top-source-pole-tag {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background-color: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--text-primary);
+  flex-shrink: 0;
 }
 
 .top-source-domain {
@@ -1293,13 +1314,14 @@ body {
 }
 
 /* ==========================================================================
-   BARRA DE BUSCA CÁPSULA DO GOOGLE (Google Pill Search Bar + Botões Clássicos)
+   COMMAND DECK DE BUSCA (/taste-design-direction — 2-Tier Obsidian Capsule)
    ========================================================================== */
 .composer-region {
   position: sticky;
   bottom: 0;
-  padding: 12px 0 18px;
-  background: linear-gradient(to top, var(--bg-canvas) 82%, rgba(16, 18, 22, 0));
+  z-index: 30;
+  padding: 10px 0 18px;
+  background: linear-gradient(to top, var(--bg-canvas) 84%, rgba(16, 18, 22, 0));
 }
 
 .composer-context-bar {
@@ -1307,19 +1329,19 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 7px 14px;
+  padding: 6px 14px;
   margin-bottom: 8px;
-  border-radius: 999px;
-  background-color: var(--bg-surface);
-  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background-color: #16181e;
+  border: 1px solid rgba(255, 255, 255, 0.09);
   font-size: 12px;
   font-family: var(--font-mono);
   color: var(--text-secondary);
 }
 
 .g-dot-green {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background-color: var(--g-green);
   display: inline-block;
@@ -1346,32 +1368,44 @@ body {
   text-decoration: underline;
 }
 
-.google-search-capsule {
+/* Container Principal 2-Tier Command Deck */
+.google-search-capsule.composer-command-deck {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 0;
+  background-color: #171920;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 16px;
+  box-shadow: 0 14px 34px -10px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.02) inset;
+  overflow: hidden;
+  transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
 }
 
-.google-pill-bar {
+.google-search-capsule.composer-command-deck:hover {
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.google-search-capsule.composer-command-deck:focus-within {
+  background-color: #1a1d25;
+  border-color: rgba(138, 180, 248, 0.55);
+  box-shadow: 0 16px 38px -10px rgba(0, 0, 0, 0.72), 0 0 0 3px rgba(66, 133, 244, 0.14);
+}
+
+/* Tier 1: Linha Superior de Digitação (100% livre para a pergunta) */
+.google-pill-bar.composer-input-row {
   display: flex;
   align-items: center;
   gap: 12px;
-  background-color: var(--bg-pill);
-  border: 1px solid var(--border-strong);
-  border-radius: 28px;
-  padding: 8px 10px 8px 18px;
-  transition: background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
-}
-
-.google-pill-bar:hover,
-.google-pill-bar:focus-within {
-  background-color: var(--bg-pill-hover);
-  border-color: var(--g-blue);
-  box-shadow: 0 2px 12px rgba(66, 133, 244, 0.18);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 12px 14px 11px 16px;
+  box-shadow: none;
 }
 
 .google-search-icon {
-  color: var(--text-muted);
+  color: var(--g-blue-light);
+  opacity: 0.85;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1393,8 +1427,10 @@ body {
   background: transparent;
   border: 0;
   color: var(--text-primary);
-  font-family: var(--font-mono);
-  font-size: 14.5px;
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: 450;
+  letter-spacing: -0.005em;
   line-height: 1.5;
   resize: none;
   outline: none;
@@ -1403,6 +1439,7 @@ body {
 
 .composer-textarea::placeholder {
   color: var(--text-muted);
+  font-weight: 400;
 }
 
 @supports not (field-sizing: content) {
@@ -1424,135 +1461,186 @@ body {
   }
 }
 
-/* Seletor de Escopo Geográfico, Modo de Foco e Seletor de LLM (Ollama) na Barra do Google */
-.scope-selector-wrap,
-.focus-selector-wrap,
-.model-selector-wrap {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
-}
-
-.google-scope-select,
-.google-focus-select,
-.google-model-select {
-  background-color: #303134;
-  border: 1px solid #3c4043;
-  border-radius: 999px;
-  color: var(--text-primary);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  padding: 6px 12px;
-  max-width: 220px;
-  cursor: pointer;
-  outline: none;
-  transition: border-color 140ms ease, background-color 140ms ease;
-}
-
-.google-scope-select {
-  border-color: rgba(251, 188, 5, 0.45);
-  color: var(--g-yellow);
-  max-width: 205px;
-}
-
-.google-scope-select:hover,
-.google-scope-select:focus {
-  border-color: var(--g-yellow);
-  background-color: #38393d;
-}
-
-.google-focus-select {
-  border-color: rgba(52, 168, 83, 0.45);
-  color: var(--g-green);
-  max-width: 190px;
-}
-
-.google-focus-select:hover,
-.google-focus-select:focus {
-  border-color: var(--g-green);
-  background-color: #38393d;
-}
-
-.google-model-select:hover,
-.google-model-select:focus {
-  border-color: var(--g-blue-light);
-  background-color: #38393d;
-}
-
 .composer-submit-btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   padding: 8px 16px;
-  border-radius: 999px;
-  border: 1px solid rgba(138, 180, 248, 0.4);
-  background-color: var(--g-blue);
+  border-radius: 10px;
+  border: 1px solid rgba(138, 180, 248, 0.35);
+  background: linear-gradient(180deg, #3b78e7 0%, #2b63c9 100%);
   color: #ffffff;
   font-size: 13px;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-weight: 600;
+  letter-spacing: -0.01em;
   cursor: pointer;
   flex-shrink: 0;
-  transition: background-color 140ms ease, transform 120ms ease;
+  transition: filter 140ms ease, transform 120ms ease, border-color 140ms ease;
 }
 
 .composer-submit-btn:hover {
-  background-color: #3367d6;
+  filter: brightness(1.08);
+  border-color: rgba(138, 180, 248, 0.65);
 }
 
 .composer-submit-btn:active {
   transform: scale(0.98);
 }
 
-/* Botões Clássicos Abaixo da Barra do Google ("Pesquisa DeepEvil" & "Estou com Sorte") */
-.google-classic-buttons {
+/* Tier 2: Barra Inferior de Controles Táticos (Escopo, Idioma, Foco, LLM e Sorte) */
+.composer-control-deck {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
+  padding: 8px 14px 9px;
+  background-color: rgba(12, 14, 18, 0.58);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-.g-btn {
-  background-color: #303134;
-  border: 1px solid #3c4043;
-  border-radius: 6px;
-  color: var(--text-primary);
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  padding: 7px 15px;
-  cursor: pointer;
-  transition: border-color 140ms ease, color 140ms ease, transform 120ms ease;
+.composer-tactical-group,
+.composer-meta-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
-.g-btn:hover {
-  border-color: var(--g-blue-light);
-  color: #ffffff;
+/* Pílula Tática Individual (Ícone SVG + Kicker + Select limpo) */
+.tactical-control-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 9px;
+  border-radius: 8px;
+  background-color: #20232b;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition: background-color 140ms ease, border-color 140ms ease;
 }
 
-.g-btn-lucky:hover {
-  border-color: var(--g-green);
+.tactical-control-pill:hover,
+.tactical-control-pill:focus-within {
+  background-color: #262a34;
+  border-color: rgba(255, 255, 255, 0.20);
+}
+
+.tactical-control-pill.pill-scope:hover,
+.tactical-control-pill.pill-scope:focus-within {
+  border-color: rgba(251, 188, 5, 0.5);
+}
+
+.tactical-control-pill.pill-lang:hover,
+.tactical-control-pill.pill-lang:focus-within {
+  border-color: rgba(138, 180, 248, 0.55);
+}
+
+.tactical-control-pill.pill-focus:hover,
+.tactical-control-pill.pill-focus:focus-within {
+  border-color: rgba(52, 168, 83, 0.5);
+}
+
+.tactical-pill-icon {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.pill-scope .tactical-pill-icon {
+  color: var(--g-yellow);
+}
+
+.pill-lang .tactical-pill-icon {
+  color: var(--g-blue-light);
+}
+
+.pill-focus .tactical-pill-icon {
   color: var(--g-green);
 }
 
-.g-btn:active {
+.pill-model .tactical-pill-icon {
+  color: #c4b5fd;
+}
+
+.tactical-pill-kicker {
+  font-size: 10.5px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  user-select: none;
+  cursor: pointer;
+}
+
+.tactical-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: transparent;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%239aa0a6' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 2px center;
+  border: 0;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  padding: 2px 15px 2px 2px;
+  max-width: 215px;
+  cursor: pointer;
+  outline: none;
+  text-overflow: ellipsis;
+}
+
+.tactical-select option {
+  background-color: #181a20;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  padding: 6px;
+}
+
+.tactical-lucky-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 8px;
+  background-color: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: border-color 140ms ease, color 140ms ease, background-color 140ms ease, transform 120ms ease;
+}
+
+.tactical-lucky-btn:hover {
+  background-color: rgba(52, 168, 83, 0.1);
+  border-color: rgba(52, 168, 83, 0.45);
+  color: var(--g-green);
+}
+
+.tactical-lucky-btn:active {
   transform: scale(0.98);
 }
 
 .composer-hint {
-  font-size: 11.5px;
+  font-size: 11px;
   font-family: var(--font-mono);
   color: var(--text-muted);
-  margin-left: 6px;
+  margin-left: 2px;
+  white-space: nowrap;
 }
 
 .composer-hint kbd {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 10.5px;
   padding: 1px 5px;
   border-radius: 4px;
-  background-color: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
+  background-color: #20232b;
+  border: 1px solid rgba(255, 255, 255, 0.09);
   color: var(--text-secondary);
 }
 

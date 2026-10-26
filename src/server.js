@@ -6,7 +6,7 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const express = require('express');
 const { createDatabase } = require('./db');
 const { createQdrantStore } = require('./qdrant');
-const { buildContextualSearchQuery, searchBrave } = require('./search');
+const { buildContextualSearchQuery, searchBrave, normalizeSearchScope, normalizeSearchLang, localizeSourceHeadlines } = require('./search');
 const { extractTopSources } = require('./extractor');
 const { SUPPORTED_TRANSLATION_LANGUAGES, resolveLlmConfig, listOllamaModels, streamAnswer, translateTurnMarkdown } = require('./llm');
 const {
@@ -476,8 +476,8 @@ function createApp(options = {}) {
     const rawConvId = String(req.body?.conversationId || '').trim();
     const selectedModel = String(req.body?.model || '').trim();
     const focusMode = String(req.body?.focusMode || 'web').trim().toLowerCase() || 'web';
-    const rawScope = String(req.body?.searchScope || 'global').trim().toLowerCase();
-    const searchScope = ['global', 'external', 'brazil'].includes(rawScope) ? rawScope : 'global';
+    const searchScope = normalizeSearchScope(req.body?.searchScope || 'global');
+    const searchLang = normalizeSearchLang(req.body?.searchLang || 'pt-BR');
 
     if (!rawQuestion) {
       res.status(400).type('html').send(
@@ -503,7 +503,8 @@ function createApp(options = {}) {
       provider: llmConfig.provider,
       model: llmConfig.model,
       focusMode,
-      searchScope
+      searchScope,
+      searchLang
     });
 
     const models = await listModelsFn({ env }).catch(() => []);
@@ -514,7 +515,8 @@ function createApp(options = {}) {
       models,
       activeModel: llmConfig.model,
       activeFocus: focusMode,
-      activeScope: searchScope
+      activeScope: searchScope,
+      activeLang: searchLang
     });
     const removeHeroOob = '<div id="empty-hero" hx-swap-oob="delete"></div>';
 
@@ -738,10 +740,16 @@ function createApp(options = {}) {
           }
         }
 
-        validSources = combinedSources.map((src, idx) => ({
+        const indexedSources = combinedSources.map((src, idx) => ({
           ...src,
           citationIndex: idx + 1
         }));
+
+        // Traduz automaticamente os assuntos/headlines das fontes internacionais (US, CN, DE, JP, KR, RU, BR)
+        // para o idioma de busca selecionado (turn.search_lang) quando em execução real
+        validSources = extractFn === extractTopSources
+          ? await localizeSourceHeadlines(indexedSources, turn.search_lang || 'pt-BR').catch(() => indexedSources)
+          : indexedSources;
 
         db.saveTurnSources(turn.id, validSources);
         db.updateTurnStatus(turn.id, 'streaming', {
@@ -784,6 +792,7 @@ function createApp(options = {}) {
         priorTurns,
         env,
         selectedModel: turn.model || llmConfig.model,
+        searchLang: turn.search_lang || 'pt-BR',
         signal: abortController.signal,
         onDelta: (_delta, sanitizedAccumulated) => {
           answerBatcher.push(sanitizedAccumulated);

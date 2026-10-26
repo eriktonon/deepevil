@@ -1245,6 +1245,79 @@ test('15. Federação Geopolítica Multi-Polo (🇺🇸 US + 🇨🇳 China + �
   assert.ok(!brazilOnly.some((s) => s.url.includes('brasilescola')));
 });
 
+test('16. Expansão Global 7 Polos (US·CN·DE·JP·KR·RU·BR), Seletor de Idioma (searchLang) e Command Deck UI (/taste-design-direction)', async () => {
+  const { renderComposerForm, renderTopSourcesStrip, renderTurnCard } = require('../src/render');
+
+  const poles = buildMultiPolarQueries('me traga materiais de ontologia de IA pela palantir');
+  assert.match(poles.de, /Ontologie Informatik/i);
+  assert.match(poles.jp, /オントロジー/);
+  assert.match(poles.kr, /온톨로지/);
+
+  const sevenPolesSelected = selectMultiPolarTopResults({
+    usPool: [{ url: 'https://arxiv.org/abs/2501.00001', title: 'Enterprise AI Ontology' }],
+    cnPool: [{ url: 'https://zh.wikipedia.org/wiki/知识图谱', title: '知识图谱 — Wikipedia (ZH)' }],
+    dePool: [{ url: 'https://de.wikipedia.org/wiki/Wissensgraph', title: 'Wissensgraph — Wikipedia (DE)' }],
+    jpPool: [{ url: 'https://ja.wikipedia.org/wiki/ナレッジグラフ', title: 'ナレッジグラフ — Wikipedia (JA)' }],
+    krPool: [{ url: 'https://ko.wikipedia.org/wiki/지식_그래프', title: '지식 그래프 — Wikipedia (KO)' }],
+    ruPool: [{ url: 'https://habr.com/ru/articles/1021388/', title: 'Граф знаний — Habr Engineering' }],
+    brPool: [{ url: 'https://pt.wikipedia.org/wiki/Grafo_de_conhecimento', title: 'Grafo de conhecimento — Wikipedia (PT)' }]
+  }, 7, 'ontologia de IA', 'global');
+
+  assert.equal(sevenPolesSelected.length, 7);
+  assert.match(sevenPolesSelected[0].title, /^\[🇺🇸 US\]/);
+  assert.match(sevenPolesSelected[1].title, /^\[🇨🇳 CN\]/);
+  assert.match(sevenPolesSelected[2].title, /^\[🇩🇪 DE\]/);
+  assert.match(sevenPolesSelected[3].title, /^\[🇯🇵 JP\]/);
+  assert.match(sevenPolesSelected[4].title, /^\[🇰🇷 KR\]/);
+  assert.match(sevenPolesSelected[5].title, /^\[🇷🇺 RU\]/);
+  assert.match(sevenPolesSelected[6].title, /^\[🇧🇷 BR\]/);
+
+  const composerHtml = renderComposerForm(null, false, {
+    activeScope: 'global',
+    activeLang: 'pt-BR',
+    activeFocus: 'web'
+  });
+  assert.match(composerHtml, /composer-command-deck/);
+  assert.match(composerHtml, /composer-control-deck/);
+  assert.match(composerHtml, /id="scope-select"/);
+  assert.match(composerHtml, /id="lang-select"/);
+  assert.match(composerHtml, /name="searchLang"/);
+  assert.match(composerHtml, /Global · 7 Polos \(US·CN·DE·JP·KR·RU·BR\)/);
+
+  const stripHtml = renderTopSourcesStrip(42, [
+    {
+      citationIndex: 1,
+      domain: 'de.wikipedia.org',
+      title: '[🇩🇪 DE] Grafos de Conhecimento e Sistemas Semânticos — Wikipedia (DE)',
+      originalTitle: '[🇩🇪 DE] Wissensgraphen und Semantische Systeme — Wikipedia (DE)'
+    },
+    {
+      citationIndex: 2,
+      domain: 'ja.wikipedia.org',
+      title: '[🇯🇵 JP] Grafo de Conhecimento — Wikipedia (JA)',
+      originalTitle: '[🇯🇵 JP] ナレッジグラフ — Wikipedia (JA)'
+    }
+  ]);
+  assert.match(stripHtml, /top-source-pole-tag/);
+  assert.match(stripHtml, /🇩🇪 DE/);
+  assert.match(stripHtml, /🇯🇵 JP/);
+  assert.match(stripHtml, /Grafos de Conhecimento e Sistemas Semânticos/);
+
+  const turnCardHtml = renderTurnCard({
+    id: 42,
+    question: 'Como funcionam grafos de conhecimento?',
+    search_query: 'knowledge graph',
+    search_scope: 'global',
+    search_lang: 'pt-BR',
+    status: 'completed',
+    answer_markdown: 'Resumo [1].',
+    sources: []
+  });
+  assert.match(turnCardHtml, /turn-lang-badge/);
+  assert.match(turnCardHtml, /Headlines &amp; Síntese: PT-BR/);
+});
+
+
 
 
 

@@ -77,7 +77,7 @@ function createDatabase(customDbPath) {
     CREATE INDEX IF NOT EXISTS idx_sources_turn_id ON sources(turn_id);
   `);
 
-  // Migração segura para focus_mode e search_scope em bancos SQLite já existentes
+  // Migração segura para focus_mode, search_scope e search_lang em bancos SQLite já existentes
   try {
     db.exec(`ALTER TABLE turns ADD COLUMN focus_mode TEXT NOT NULL DEFAULT 'web'`);
   } catch (_) {
@@ -87,6 +87,11 @@ function createDatabase(customDbPath) {
     db.exec(`ALTER TABLE turns ADD COLUMN search_scope TEXT NOT NULL DEFAULT 'global'`);
   } catch (_) {
     // Coluna search_scope já existe
+  }
+  try {
+    db.exec(`ALTER TABLE turns ADD COLUMN search_lang TEXT NOT NULL DEFAULT 'pt-BR'`);
+  } catch (_) {
+    // Coluna search_lang já existe
   }
 
   const stmts = {
@@ -146,9 +151,9 @@ function createDatabase(customDbPath) {
     `),
     insertTurn: db.prepare(`
       INSERT INTO turns (
-        conversation_id, question, search_query, status, provider, model, focus_mode, search_scope
+        conversation_id, question, search_query, status, provider, model, focus_mode, search_scope, search_lang
       ) VALUES (
-        @conversationId, @question, @searchQuery, 'pending', @provider, @model, @focusMode, @searchScope
+        @conversationId, @question, @searchQuery, 'pending', @provider, @model, @focusMode, @searchScope, @searchLang
       )
     `),
     getTurn: db.prepare(`
@@ -250,10 +255,12 @@ function createDatabase(customDbPath) {
       return stmts.deleteConversation.run(Number(id)).changes > 0;
     },
 
-    createTurn({ conversationId, question, searchQuery = '', provider = '', model = '', focusMode = 'web', searchScope = 'global' }) {
+    createTurn({ conversationId, question, searchQuery = '', provider = '', model = '', focusMode = 'web', searchScope = 'global', searchLang = 'pt-BR' }) {
       const convId = Number(conversationId);
       const rawScope = String(searchScope || 'global').trim().toLowerCase();
       const validScope = ['global', 'external', 'brazil'].includes(rawScope) ? rawScope : 'global';
+      const rawLang = String(searchLang || 'pt-BR').trim();
+      const validLang = ['pt-BR', 'en', 'es', 'de', 'ja', 'ko', 'zh', 'ru', 'fr'].includes(rawLang) ? rawLang : 'pt-BR';
       const info = stmts.insertTurn.run({
         conversationId: convId,
         question: String(question).trim(),
@@ -261,7 +268,8 @@ function createDatabase(customDbPath) {
         provider,
         model,
         focusMode: String(focusMode || 'web').trim().toLowerCase(),
-        searchScope: validScope
+        searchScope: validScope,
+        searchLang: validLang
       });
       stmts.touchConversation.run({ id: convId });
       return stmts.getTurn.get(info.lastInsertRowid);
