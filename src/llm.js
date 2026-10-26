@@ -1,7 +1,29 @@
 'use strict';
 
-const { execFile } = require('node:child_process');
+const { execFile, spawn } = require('node:child_process');
 const { request } = require('undici');
+
+let wslHolderSpawned = false;
+
+/**
+ * Mantém uma referência de sessão `wsl.exe` invisível aberta no Windows para impedir
+ * que o `wslservice.exe` encerre a distro Linux 8 segundos após comandos curtos,
+ * o que derrubaria o `ollama.service` no meio do stream (`ECONNRESET` / `Invalid EOF state`).
+ */
+function ensureWslKeepAliveHolder() {
+  if (process.platform !== 'win32' || wslHolderSpawned) return;
+  try {
+    const child = spawn('wsl.exe', ['-e', 'sh', '-c', 'pgrep -f "sleep infinity" >/dev/null 2>&1 || exec sleep infinity'], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true
+    });
+    child.unref();
+    wslHolderSpawned = true;
+  } catch (_) {
+    // Ignora caso wsl.exe não exista na máquina
+  }
+}
 
 /**
  * Acorda a VM do WSL2 / serviço Ollama automaticamente caso o Windows tenha
@@ -9,6 +31,7 @@ const { request } = require('undici');
  */
 function tryWakeLocalOllama() {
   if (process.platform !== 'win32') return Promise.resolve();
+  ensureWslKeepAliveHolder();
   return new Promise((resolve) => {
     execFile(
       'wsl.exe',
@@ -447,6 +470,9 @@ async function streamAnswer({
 }
 
 async function streamFromOllama({ baseUrl, model, numCtx, systemPrompt, messages, onToken, signal, requestFn }) {
+  if (requestFn === request) {
+    ensureWslKeepAliveHolder();
+  }
   const ollamaMessages = [
     { role: 'system', content: systemPrompt },
     ...messages
@@ -485,7 +511,7 @@ async function streamFromOllama({ baseUrl, model, numCtx, systemPrompt, messages
       } catch (err) {
         lastErr = err;
         const msg = String(err?.message || err?.code || '');
-        const isTransientSocketErr = /ECONNRESET|ECONNREFUSED|UND_ERR_SOCKET|SocketError|other side closed|EPIPE/i.test(msg);
+        const isTransientSocketErr = /ECONNRESET|ECONNREFUSED|UND_ERR_SOCKET|SocketError|other side closed|EPIPE|Invalid EOF state/i.test(msg);
         if (!isTransientSocketErr || attempt === 3 || (signal && signal.aborted)) {
           throw err;
         }
@@ -567,7 +593,7 @@ async function streamFromOllama({ baseUrl, model, numCtx, systemPrompt, messages
       return;
     } catch (streamErr) {
       const msg = String(streamErr?.message || streamErr?.code || '');
-      const isReset = /ECONNRESET|ECONNREFUSED|UND_ERR_SOCKET|SocketError|other side closed|EPIPE/i.test(msg);
+      const isReset = /ECONNRESET|ECONNREFUSED|UND_ERR_SOCKET|SocketError|other side closed|EPIPE|Invalid EOF state/i.test(msg);
       if (!isReset || emittedTokens > 0 || outerAttempt === 3 || (signal && signal.aborted)) {
         throw streamErr;
       }
