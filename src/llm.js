@@ -1,6 +1,23 @@
 'use strict';
 
+const { execFile } = require('node:child_process');
 const { request } = require('undici');
+
+/**
+ * Acorda a VM do WSL2 / serviço Ollama automaticamente caso o Windows tenha
+ * hibernado a instância por ociosidade (evitando erro `read ECONNRESET` no portproxy 11434).
+ */
+function tryWakeLocalOllama() {
+  if (process.platform !== 'win32') return Promise.resolve();
+  return new Promise((resolve) => {
+    execFile(
+      'wsl.exe',
+      ['-e', 'sh', '-c', 'systemctl is-active ollama >/dev/null 2>&1 || true'],
+      { timeout: 6000, windowsHide: true },
+      () => resolve()
+    );
+  });
+}
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
@@ -160,6 +177,9 @@ async function listOllamaModels({ env = process.env, requestFn = request } = {})
 
     return filtered;
   } catch (_) {
+    if (requestFn === request) {
+      tryWakeLocalOllama().catch(() => {});
+    }
     return [{ name: defaultModel, sizeGb: null, provider: 'ollama' }];
   }
 }
@@ -435,8 +455,11 @@ async function streamFromOllama({ baseUrl, model, numCtx, systemPrompt, messages
   const reqOpts = {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json'
+      'Content-Type': 'application/json',
+      'Connection': 'close'
     },
+    headersTimeout: 120000,
+    bodyTimeout: 120000,
     body: JSON.stringify({
       model,
       stream: true,
@@ -454,64 +477,102 @@ async function streamFromOllama({ baseUrl, model, numCtx, systemPrompt, messages
   };
   if (signal) reqOpts.signal = signal;
 
-  let response = await requestFn(`${baseUrl}/api/chat`, reqOpts);
-
-  // Fallback transparente entre o alias local (granite4.2-uncensored:latest) e o namespace público no Ollama Hub (eriktonon/granite4.2-uncensored:latest)
-  if (response.statusCode === 404 && (model === 'granite4.2-uncensored:latest' || model === 'eriktonon/granite4.2-uncensored:latest')) {
-    if (response.body && typeof response.body.dump === 'function') {
-      await response.body.dump().catch(() => {});
-    }
-    const altModel = model === 'granite4.2-uncensored:latest'
-      ? 'eriktonon/granite4.2-uncensored:latest'
-      : 'granite4.2-uncensored:latest';
-    reqOpts.body = JSON.stringify({
-      ...JSON.parse(reqOpts.body),
-      model: altModel
-    });
-    response = await requestFn(`${baseUrl}/api/chat`, reqOpts);
-  }
-
-  if (response.statusCode < 200 || response.statusCode >= 300) {
-    const errBody = await response.body.text().catch(() => '');
-    throw new Error(`Ollama API (${baseUrl}) retornou HTTP ${response.statusCode}: ${errBody.slice(0, 260)}`);
-  }
-
-  let buffer = '';
-  for await (const chunk of response.body) {
-    if (signal && signal.aborted) break;
-    buffer += Buffer.isBuffer(chunk) ? chunk.toString('utf-8') : String(chunk);
-    const lines = buffer.split(/\r?\n/);
-    buffer = lines.pop() || '';
-
-    for (const line of lines) {
-      if (signal && signal.aborted) break;
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      const cleanLine = trimmed.startsWith('data:') ? trimmed.slice(5).trim() : trimmed;
-      if (!cleanLine || cleanLine === '[DONE]') continue;
+  const sendWithAutoWake = async () => {
+    let lastErr = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        const event = JSON.parse(cleanLine);
-        if (event.error) {
-          throw new Error(`Erro no Ollama: ${event.error}`);
-        }
-        const delta = event?.message?.content ?? event?.choices?.[0]?.delta?.content;
-        if (delta) {
-          onToken(delta);
-        }
+        return await requestFn(`${baseUrl}/api/chat`, reqOpts);
       } catch (err) {
-        if (err.message && err.message.startsWith('Erro no Ollama:')) throw err;
+        lastErr = err;
+        const msg = String(err?.message || err?.code || '');
+        const isTransientSocketErr = /ECONNRESET|ECONNREFUSED|UND_ERR_SOCKET|SocketError|other side closed|EPIPE/i.test(msg);
+        if (!isTransientSocketErr || attempt === 3 || (signal && signal.aborted)) {
+          throw err;
+        }
+        await tryWakeLocalOllama();
+        await new Promise((r) => setTimeout(r, attempt * 1200));
       }
     }
-  }
+    throw lastErr;
+  };
 
-  if (buffer.trim() && !(signal && signal.aborted)) {
-    const cleanLine = buffer.trim().startsWith('data:') ? buffer.trim().slice(5).trim() : buffer.trim();
+  let emittedTokens = 0;
+
+  for (let outerAttempt = 1; outerAttempt <= 3; outerAttempt++) {
     try {
-      const event = JSON.parse(cleanLine);
-      const delta = event?.message?.content ?? event?.choices?.[0]?.delta?.content;
-      if (delta) onToken(delta);
-    } catch (_) {
-      // Ignora resíduo final
+      let response = await sendWithAutoWake();
+
+      // Fallback transparente entre o alias local (granite4.2-uncensored:latest) e o namespace público no Ollama Hub (eriktonon/granite4.2-uncensored:latest)
+      if (response.statusCode === 404 && (model === 'granite4.2-uncensored:latest' || model === 'eriktonon/granite4.2-uncensored:latest')) {
+        if (response.body && typeof response.body.dump === 'function') {
+          await response.body.dump().catch(() => {});
+        }
+        const altModel = model === 'granite4.2-uncensored:latest'
+          ? 'eriktonon/granite4.2-uncensored:latest'
+          : 'granite4.2-uncensored:latest';
+        reqOpts.body = JSON.stringify({
+          ...JSON.parse(reqOpts.body),
+          model: altModel
+        });
+        response = await sendWithAutoWake();
+      }
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        const errBody = await response.body.text().catch(() => '');
+        throw new Error(`Ollama API (${baseUrl}) retornou HTTP ${response.statusCode}: ${errBody.slice(0, 260)}`);
+      }
+
+      let buffer = '';
+      for await (const chunk of response.body) {
+        if (signal && signal.aborted) break;
+        buffer += Buffer.isBuffer(chunk) ? chunk.toString('utf-8') : String(chunk);
+        const lines = buffer.split(/\r?\n/);
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (signal && signal.aborted) break;
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          const cleanLine = trimmed.startsWith('data:') ? trimmed.slice(5).trim() : trimmed;
+          if (!cleanLine || cleanLine === '[DONE]') continue;
+          try {
+            const event = JSON.parse(cleanLine);
+            if (event.error) {
+              throw new Error(`Erro no Ollama: ${event.error}`);
+            }
+            const delta = event?.message?.content ?? event?.choices?.[0]?.delta?.content;
+            if (delta) {
+              emittedTokens += 1;
+              onToken(delta);
+            }
+          } catch (err) {
+            if (err.message && err.message.startsWith('Erro no Ollama:')) throw err;
+          }
+        }
+      }
+
+      if (buffer.trim() && !(signal && signal.aborted)) {
+        const cleanLine = buffer.trim().startsWith('data:') ? buffer.trim().slice(5).trim() : buffer.trim();
+        try {
+          const event = JSON.parse(cleanLine);
+          const delta = event?.message?.content ?? event?.choices?.[0]?.delta?.content;
+          if (delta) {
+            emittedTokens += 1;
+            onToken(delta);
+          }
+        } catch (_) {
+          // Ignora resíduo final
+        }
+      }
+      return;
+    } catch (streamErr) {
+      const msg = String(streamErr?.message || streamErr?.code || '');
+      const isReset = /ECONNRESET|ECONNREFUSED|UND_ERR_SOCKET|SocketError|other side closed|EPIPE/i.test(msg);
+      if (!isReset || emittedTokens > 0 || outerAttempt === 3 || (signal && signal.aborted)) {
+        throw streamErr;
+      }
+      await tryWakeLocalOllama();
+      await new Promise((r) => setTimeout(r, outerAttempt * 1500));
     }
   }
 }
