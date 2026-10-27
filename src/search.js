@@ -149,10 +149,11 @@ function isExplicitBrazilQuery(rawQuery) {
 
 /**
  * Detecta se um candidato pertence à bolha geográfica de blogs/portais em português (`.br`, `.pt`, `/pt/`)
- * quando o usuário NÃO pediu uma pesquisa específica sobre o Brasil.
+ * ou está redigido em português quando avaliado para um polo internacional (`forceInternationalCheck=true`).
  */
-function isPortugueseOrBrazilianBubbleResult(item, rawQuery = '') {
-  if (!item || !item.url || isExplicitBrazilQuery(rawQuery)) return false;
+function isPortugueseOrBrazilianBubbleResult(item, rawQuery = '', forceInternationalCheck = false) {
+  if (!item || !item.url) return false;
+  if (!forceInternationalCheck && isExplicitBrazilQuery(rawQuery)) return false;
   let parsed;
   try {
     parsed = new URL(item.url);
@@ -167,12 +168,26 @@ function isPortugueseOrBrazilianBubbleResult(item, rawQuery = '') {
     return false;
   }
 
+  const brMediaHosts = [
+    'brasil247.com',
+    'metropoles.com',
+    'globo.com',
+    'uol.com',
+    'r7.com',
+    'terra.com',
+    'exame.com',
+    'cnnbrasil.com.br',
+    'poder360.com.br',
+    'cartacapital.com.br'
+  ];
+
   if (
     host.endsWith('.br') ||
     host.endsWith('.pt') ||
     host.startsWith('pt.') ||
     host.startsWith('br.') ||
-    /\/(pt|pt-br|pt_br|br)(\/|$)/i.test(path) ||
+    brMediaHosts.some((d) => host === d || host.endsWith(`.${d}`)) ||
+    /\/(pt|pt-br|pt_br|br|portuguese|brasil)(\/|$)/i.test(path) ||
     /-(pt|br)\b/i.test(path)
   ) {
     return true;
@@ -183,7 +198,46 @@ function isPortugueseOrBrazilianBubbleResult(item, rawQuery = '') {
     return true;
   }
 
+  // Se estiver filtrando para polos internacionais (US, CN, DE, JP, KR, RU), rejeita títulos redigidos em português
+  if (forceInternationalCheck && /[ãõç]/i.test(text) && /\b(não|são|sob\s+os|liderança|política|relações|governo|educação|história|ciência|região|cidades|públicas|avaliação|produção|como\s+o|como\s+a)\b/i.test(text)) {
+    return true;
+  }
+
   return false;
+}
+
+/**
+ * Classifica o domínio semântico da consulta para rotear apenas as fontes apropriadas
+ * (evitando poluir consultas de Política, Economia, Arquitetura Civil, Urbanismo ou Geografia com GitHub, Habr ou HackerNews).
+ * Retorna: `'software_cs'` | `'exact_sciences'` | `'general_research'`
+ */
+function classifyQueryDomain(rawQuery = '', focusMode = 'web') {
+  const mode = String(focusMode || 'web').trim().toLowerCase();
+  if (mode === 'code' || mode === 'secops') return 'software_cs';
+
+  const q = String(rawQuery || '').toLowerCase();
+
+  // 1. Arquitetura Civil, Urbanismo, Geografia, Política e Economia têm precedência sobre a palavra ambígua "arquitetura" ou "desenvolvimento"
+  const isCivilArchUrbanGeoPolEcon = /\b(urbanismo|planejamento\s+urbano|mobilidade\s+urbana|cidades?\s+compactas?|gentrifica[çc][ãa]o|zoneamento|plano\s+diretor|saneamento|arquitetura\s+(?:brutalista|bioclim[áa]tica|moderna|modernista|contempor[âa]nea|sustent[áa]vel|civil|urbana|paisag[íi]stica|g[óo]tica|barroca|colonial|de\s+interiores|hospitalar|escolar)|brutalismo|edif[íi]cios?|niemeyer|le\s+corbusier|bauhaus|zaha\s+hadid|frank\s+lloyd|geografia|relevo|hidrografia|bacia\s+hidrogr[áa]fica|cartografia|calotas?\s+polares?|degelo|[áa]rtico|ant[áa]rtida|geopol[íi]tica|diplomacia|pol[íi]tica\s+externa|pol[íi]tica\s+monet[áa]ria|pol[íi]tica\s+fiscal|elei[çc][õo]es|democracia|presid[êe]ncia|presidente|lula|bolsonaro|itamaraty|banco\s+central|taxa\s+de\s+juros|infla[çc][ãa]o|macroeconomia|pib|d[íi]vida\s+p[úu]blica|com[ée]rcio\s+internacional|desenvolvimento\s+(?:econ[ôo]mico|sustent[áa]vel|urbano|humano|social|regional))\b/i.test(q);
+
+  const hasExplicitSoftwareOrAi = /\b(software|programa[çc][ãa]o|coding|c[óo]digo[\s-]fonte|open[-\s]?source|github|\.git\b|linux|kernel|docker|kubernetes|microsservi[çc]os|microservices|api|rest|graphql|grpc|rust|python|javascript|typescript|golang|java|c\+\+|sql|postgres\w*|sqlite|redis|kafka|banco\s+de\s+dados|database|compilador|compiler|llm|llms|gpt|claude|qwen|deepseek|granite|ollama|machine\s+learning|aprendizado\s+de\s+m[áa]quina|deep\s+learning|rede\s+neural|intelig[êe]ncia\s+artificial|artificial\s+intelligence|\bia\b|cybersecurity|ciberseguran[çc]a|exploit|cve|vulnerabilidade|malware|ransomware|rootkit|pentest|engenharia\s+reversa|reverse\s+engineering|kademlia|quic|p2p|webrtc|websocket|ebpf|xdp|ftrace|hnsw|modelagem\s+3d|cad\b|blender|freecad|openscad|palantir|foundry)\b/i.test(q);
+
+  if (isCivilArchUrbanGeoPolEcon && !hasExplicitSoftwareOrAi) {
+    return 'general_research';
+  }
+
+  // 2. Ciências Exatas, Física Nuclear, Computação Quântica e Química
+  const isExactSciences = /\b(f[íi]sica\s+nuclear|nuclear|fiss[ãa]o|fission|fus[ãa]o|fusion|tokamak|iter|reator(?:es)?|reactor|ur[âa]nio|uranium|plut[ôo]nio|plutonium|smr|computa[çc][ãa]o\s+qu[âa]ntica|quantum\s+computing|f[íi]sica\s+qu[âa]ntica|quantum\s+physics|qubit|qubits|supercondutor\w*|superconducting|entrela[çc]amento|entanglement|decoer[êe]ncia|decoherence|c[óo]digos?\s+de\s+superf[íi]cie|surface\s+codes?|corre[çc][ãa]o\s+de\s+erros\s+qu[âa]nticos|quantum\s+error\s+correction|shor|grover|p[óo]s-qu[âa]ntic[oa]|ml-kem|kyber|dilithium|p[óo]lvora|gunpowder|termodin[âa]mica|astrof[íi]sica|relatividade|higgs|cern)\b/i.test(q);
+
+  if (isExactSciences && !/\b(github|reposit[óo]rio|open[-\s]?source)\b/i.test(q)) {
+    return 'exact_sciences';
+  }
+
+  if (hasExplicitSoftwareOrAi) {
+    return 'software_cs';
+  }
+
+  return 'general_research';
 }
 
 /**
@@ -210,13 +264,75 @@ function isLowSignalResult(item) {
 
 /**
  * Mapa léxico PT/ES -> EN para expandir/converter pesquisas locais em consultas globais (Worldwide Research)
- * capazes de atingir literatura primária internacional (ArXiv, OpenAlex, Kernel.org, GitHub, Wikipedia EN, NVD, IEEE).
+ * respeitando fielmente o domínio temático (Política, Economia, Software, Arquitetura, Urbanismo, Geografia, Física Nuclear, Computação Quântica).
  */
 const PT_TO_GLOBAL_TERMS = [
+  [/\bcomo\s+(?:o|a|os|as)?\s*lula\s+[eé]\s+vist[oa]\s+(?:no\s+mundo|internacionalmente|no\s+exterior|fora\s+do\s+brasil)\b/gi, 'Luiz Inácio Lula da Silva Brazil foreign policy international perception global diplomacy'],
+  [/\bcomo\s+(?:o|a|os|as)?\s*(.+?)\s+[eé]\s+vist[oa]s?\s+(?:no\s+mundo|internacionalmente|no\s+exterior)\b/gi, '$1 international perception global view foreign relations'],
   [/\bcomo\s+(?:fazer|fabricar|produzir|sintetizar|preparar)\b/gi, 'synthesis composition'],
   [/\b(?:como\s+funciona(?:m)?|o\s+que\s+s[ãa]o|o\s+que\s+[eé]|qual\s+[ea]\s+diferen[çc]a\s+entre|quais\s+s[ãa]o\s+(?:os|as)?|qual\s+[eo]?\s*|quais\s+[os|as]?\s*|me\s+explique|explique\s+como|procure|busque|encontre|me\s+traga|traga|liste|mostre|quero|preciso\s+de)\b/gi, ' '],
   [/\b(?:materiais?|conte[úu]dos?|documenta[çc][ãa]o|artigos?|estudos?|guias?|tutoriais?|refer[êe]ncias?)\s+(?:de|da|do|dos|das|sobre|para|pela|pelo)\b/gi, ' '],
   [/\bmateriais?\b/gi, ' '],
+  // Política & Geopolítica
+  [/\bpol[íi]tica\s+externa\b/gi, 'foreign policy diplomacy'],
+  [/\brela[çc][õo]es\s+internacionais\b/gi, 'international relations geopolitics'],
+  [/\bgeopol[íi]tica\s+do\s+[áa]rtico\b/gi, 'Arctic geopolitics polar maritime routes'],
+  [/\bgeopol[íi]tica\b/gi, 'geopolitics international relations'],
+  [/\bdiplomacia\b/gi, 'diplomacy foreign policy'],
+  // Economia & Macroeconomia
+  [/\bpol[íi]tica\s+monet[áa]ria\b/gi, 'monetary policy central bank'],
+  [/\bpol[íi]tica\s+fiscal\b/gi, 'fiscal policy public finance'],
+  [/\btaxa(?:s)?\s+de\s+juros\b/gi, 'interest rates monetary policy'],
+  [/\bbanco(?:s)?\s+central(?:is)?\b/gi, 'central bank monetary policy'],
+  [/\bcontrole\s+d[ea]\s+infla[çc][ãa]o\b/gi, 'inflation targeting monetary policy'],
+  [/\binfla[çc][ãa]o\b/gi, 'inflation macroeconomics'],
+  [/\bmacroeconomia\b/gi, 'macroeconomics economic policy'],
+  [/\bdesenvolvimento\s+econ[ôo]mico\b/gi, 'economic development growth'],
+  [/\bdesenvolvimento\s+sustent[áa]vel\b/gi, 'sustainable development sustainability'],
+  [/\bdesenvolvimento\s+urbano\b/gi, 'urban development city planning'],
+  [/\bdesenvolvimento\s+humano\b/gi, 'human development index'],
+  [/\bd[íi]vida\s+p[úu]blica\b/gi, 'public debt sovereign debt'],
+  [/\bcom[ée]rcio\s+internacional\b/gi, 'international trade global economy'],
+  // Arquitetura Civil & Urbanismo
+  [/\barquitetura\s+brutalista\b/gi, 'brutalist architecture modernist concrete buildings'],
+  [/\barquitetura\s+bioclim[áa]tica\b/gi, 'bioclimatic architecture passive solar sustainable building design'],
+  [/\barquitetura\s+contempor[âa]nea\b/gi, 'contemporary architecture architectural design'],
+  [/\barquitetura\s+moderna|\barquitetura\s+modernista\b/gi, 'modern architecture modernist architectural movement'],
+  [/\barquitetura\s+sustent[áa]vel\b/gi, 'sustainable architecture green building'],
+  [/\barquitetura\s+e\s+urbanismo\b/gi, 'architecture and urbanism urban design'],
+  [/\bplanejamento\s+urbano\b/gi, 'urban planning city planning'],
+  [/\bcidades?\s+compactas?\b/gi, 'compact cities urban density transit-oriented development'],
+  [/\bmobilidade\s+urbana\b/gi, 'urban mobility sustainable transport transit'],
+  [/\bmobilidade\s+sustent[áa]vel\b/gi, 'sustainable urban mobility transit'],
+  [/\burbanismo\b/gi, 'urbanism urban planning city design'],
+  [/\bgentrifica[çc][ãa]o\b/gi, 'gentrification urban sociology'],
+  // Geografia & Clima
+  [/\bgeografia\s+f[íi]sica\b/gi, 'physical geography geomorphology'],
+  [/\bgeografia\s+humana\b/gi, 'human geography spatial demography'],
+  [/\bgeografia\b/gi, 'geography spatial analysis'],
+  [/\bdegelo\s+das?\s+calotas?\s+polares?\b/gi, 'polar ice sheet melting Arctic cryosphere climate change'],
+  [/\bcalotas?\s+polares?\b/gi, 'polar ice caps cryosphere glaciology'],
+  [/\bdegelo\b/gi, 'ice melting glacier retreat'],
+  [/\b[áa]rtico\b/gi, 'Arctic polar region'],
+  [/\brotas?\s+mar[íi]timas?\b/gi, 'maritime shipping routes Northern Sea Route'],
+  [/\bbacia(?:s)?\s+hidrogr[áa]fica(?:s)?\b/gi, 'watershed river basin hydrology'],
+  [/\bmudan[çc]as?\s+clim[áa]ticas?\b/gi, 'climate change global warming'],
+  // Física Nuclear & Energia
+  [/\bf[íi]sica\s+nuclear\b/gi, 'nuclear physics atomic nucleus'],
+  [/\bfus[ãa]o\s+nuclear\b/gi, 'nuclear fusion plasma tokamak'],
+  [/\bfiss[ãa]o\s+nuclear\b/gi, 'nuclear fission reactor physics'],
+  [/\bconfinamento\s+magn[ée]tico\b/gi, 'magnetic confinement tokamak ITER'],
+  [/\breator(?:es)?\s+nuclear(?:es)?\s+de\s+fiss[ãa]o\b/gi, 'nuclear fission reactor'],
+  [/\breator(?:es)?\s+nuclear(?:es)?\b/gi, 'nuclear reactor'],
+  [/\breator(?:es)?\s+modular(?:es)?|\bsmr\b/gi, 'small modular reactors SMR nuclear'],
+  // Computação Quântica
+  [/\bcomputa[çc][ãa]o\s+qu[âa]ntica\b/gi, 'quantum computing quantum information'],
+  [/\bcorre[çc][ãa]o\s+de\s+erros?\s+qu[âa]nticos?\b/gi, 'quantum error correction fault-tolerant quantum'],
+  [/\bc[óo]digos?\s+de\s+superf[íi]cie\b/gi, 'surface codes topological quantum error correction'],
+  [/\bqubits?\s+supercondutor(?:es)?\b/gi, 'superconducting qubits transmon quantum processor'],
+  [/\bentrela[çc]amento\s+qu[âa]ntico\b/gi, 'quantum entanglement'],
+  [/\bf[íi]sica\s+qu[âa]ntica\b/gi, 'quantum physics quantum mechanics'],
+  // Software, IA & Cibersegurança
   [/\bontologia(?:s)?\s+(?:de\s+)?(?:ia|i\.a\.|intelig[êe]ncia\s+artificial|dados)?\s*(?:pela|da|do|na|no|em)?\s*palantir\b/gi, 'Palantir Foundry AIP Ontology knowledge graph enterprise AI'],
   [/\bontologia(?:s)?\b/gi, 'Ontology semantic data model knowledge graph'],
   [/\bpalantir\b/gi, 'Palantir Foundry AIP'],
@@ -225,22 +341,18 @@ const PT_TO_GLOBAL_TERMS = [
   [/\bintelig[êe]ncia(?:s)?\s+artificial(?:is)?\b/gi, 'artificial intelligence AI'],
   [/\b(?:ia|i\.a\.)\b/gi, 'AI'],
   [/\bmais\s+(?:forte(?:s)?|poderoso(?:s)?|avan[çc]ado(?:s)?|inteligente(?:s)?|capaz(?:es)?|r[áa]pido(?:s)?|eficiente(?:s)?)\b/gi, 'strongest SOTA top'],
-  [/\bforte(?:s)?\b/gi, 'strongest SOTA'],
-  [/\bmelhor(?:es)?\b/gi, 'best top SOTA'],
-  [/\bdesenvolvimento(?:\s+de\s+software|\s+de\s+sistemas)?\b/gi, 'software development coding programming'],
+  [/\bdesenvolvimento\s+de\s+(?:software|sistemas|aplica[çc][õo]es|c[óo]digo)\b/gi, 'software development coding programming'],
+  [/\bpara\s+desenvolvimento\b/gi, 'software development coding programming'],
+  [/\batualmente\b/gi, 'current'],
+  [/\bmicrosservi[çc]os\b/gi, 'microservices distributed architecture'],
   [/\bprograma[çc][ãa]o\b/gi, 'programming coding'],
-  [/\batualmente|\bhoje(?:\s+em\s+dia)?|\bagora|\bmomento\b/gi, '2026 benchmark leaderboard'],
-  [/\bcomparativo|\bcompara[çc][ãa]o|\branking\b/gi, 'benchmark comparison leaderboard'],
+  [/\bcomparativo|\bcompara[çc][ãa]o|\branking\b/gi, 'comparison benchmark'],
   [/\bmodelagem\s+3d\b/gi, '3d modeling CAD'],
   [/\bmodelagem\s+tridimensional\b/gi, '3d modeling CAD'],
   [/\bescultura\s+digital\b/gi, 'digital sculpting 3d'],
   [/\bmalha(?:s)?\s+poligonal(?:is)?\b/gi, 'polygon mesh 3d'],
   [/\breposit[óo]rio(?:s)?\s+(?:do\s+|no\s+)?github\b/gi, 'github repository'],
   [/\bc[óo]digo\s+aberto\b/gi, 'open source'],
-  [/\breator(?:es)?\s+nuclear(?:es)?\s+de\s+fiss[ãa]o\b/gi, 'nuclear fission reactor'],
-  [/\breator(?:es)?\s+nuclear(?:es)?\b/gi, 'nuclear reactor'],
-  [/\bfiss[ãa]o\s+nuclear\b/gi, 'nuclear fission'],
-  [/\bfus[ãa]o\s+nuclear\b/gi, 'nuclear fusion'],
   [/\bp[óo]lvora\s+negra\b/gi, 'gunpowder black powder'],
   [/\bp[óo]lvora\b/gi, 'gunpowder'],
   [/\bconsenso\s+distribu[íi]do\b/gi, 'distributed consensus'],
@@ -255,7 +367,7 @@ const PT_TO_GLOBAL_TERMS = [
   [/\bc[óo]digo[\s-]fonte\b/gi, 'source code'],
   [/\bimplementa[çc][ãa]o\b/gi, 'implementation'],
   [/\barquitetura\b/gi, 'architecture'],
-  [/\bdesempenho\b/gi, 'performance benchmark'],
+  [/\bdesempenho\b/gi, 'performance'],
   [/\bbanco\s+de\s+dados\b/gi, 'database'],
   [/\bdados\b/gi, 'data'],
   [/\bagente(?:s)?\b/gi, 'agents'],
@@ -264,27 +376,29 @@ const PT_TO_GLOBAL_TERMS = [
   [/\bmem[óo]ria\b/gi, 'memory'],
   [/\brede(?:s)?\s+de\s+computadores\b/gi, 'computer networks'],
   [/\bcriptografia\b/gi, 'cryptography'],
-  [/\bcomputa[çc][ãa]o\s+qu[âa]ntica\b/gi, 'quantum computing'],
   [/\baprendizado\s+de\s+m[áa]quina\b/gi, 'machine learning'],
   [/\bcomposi[çc][ãa]o\s+qu[íi]mica\b/gi, 'chemical composition'],
   [/\bqu[íi]mica\b/gi, 'chemistry'],
-  [/\bf[íi]sica\s+qu[âa]ntica\b/gi, 'quantum physics'],
   [/\bexplosivo(?:s)?\b/gi, 'explosive chemistry'],
   [/\barmamento(?:s)?|\barma(?:s)?\b/gi, 'weapons ballistics'],
   [/\bmodelo(?:s)?\b/gi, 'model'],
-  [/\bhist[óo]ria\b/gi, 'history']
+  [/\bpresidente\s+do\s+brasil\b/gi, 'President of Brazil'],
+  [/\bbrasil\b/gi, 'Brazil'],
+  [/\bbrasileir[oa]s?\b/gi, 'Brazilian'],
+  [/\bhist[óo]ria\b/gi, 'history'],
+  [/\bno\s+mundo\b/gi, 'global international']
 ];
 
 /**
  * Converte ou expande uma consulta para Global Research (Worldwide / English technical terms),
  * removendo travas regionais e muletas conversacionais que prendiam a busca em portais `.br` rasos.
  */
-function toGlobalResearchQuery(rawQuery) {
+function toGlobalResearchQuery(rawQuery, { forceGlobal = false } = {}) {
   const clean = String(rawQuery || '').trim();
   if (!clean) return '';
 
-  // Se a consulta for explicitamente sobre o Brasil, preserva os termos originais sem forçar inglês
-  if (isExplicitBrazilQuery(clean)) {
+  // Se a consulta for explicitamente sobre o Brasil (e não estiver forçando tradução para polos internacionais), preserva os termos originais
+  if (!forceGlobal && isExplicitBrazilQuery(clean)) {
     return clean;
   }
 
@@ -320,8 +434,9 @@ function toGlobalResearchQuery(rawQuery) {
  * Gera consultas nativas Multi-Polo nos 7 grandes centros tecnológicos e científicos mundiais:
  * 🇺🇸 EUA (EN), 🇨🇳 China (ZH), 🇩🇪 Alemanha (DE), 🇯🇵 Japão (JA), 🇰🇷 Coreia do Sul (KO), 🇷🇺 Rússia (RU) e 🇧🇷 Brasil (PT).
  */
-function buildMultiPolarQueries(rawQuery) {
-  const enBase = toGlobalResearchQuery(rawQuery);
+function buildMultiPolarQueries(rawQuery, focusMode = 'web') {
+  const domain = classifyQueryDomain(rawQuery, focusMode);
+  const enBase = toGlobalResearchQuery(rawQuery, { forceGlobal: true });
   const lower = `${rawQuery || ''} ${enBase}`.toLowerCase();
 
   const strippedPt = String(rawQuery || '')
@@ -338,6 +453,7 @@ function buildMultiPolarQueries(rawQuery) {
   let jpTerms = [];
   let krTerms = [];
   let ruTerms = [];
+  let usWikiCustom = '';
   let cnWikiCustom = '';
   let deWikiCustom = '';
   let jpWikiCustom = '';
@@ -347,83 +463,211 @@ function buildMultiPolarQueries(rawQuery) {
   let brWiki = strippedPt || enBase;
 
   const isOntologyOrPalantir = /\b(ontolog\w*|palantir|foundry|aip|knowledge\s+graph|grafo\s+de\s+conhecimento|semantic\s+layer)\b/i.test(lower);
-  const isModelBenchmark = !isOntologyOrPalantir && /\b(llm|coding|programming|software\s+development|benchmark|leaderboard|strongest|best|top|sota)\b/i.test(lower);
+  const isModelBenchmark = !isOntologyOrPalantir && domain === 'software_cs' && /\b(llm|coding|programming|software\s+development|benchmark|leaderboard|strongest|best|top|sota)\b/i.test(lower) && /\b(ia|ai|llm|modelo|model|gpt|claude|qwen|deepseek)\b/i.test(lower);
+
+  // 1. Política, Diplomacia & Geopolítica (ex.: Lula, política externa, eleições, democracia)
+  if (/\b(lula|luiz\s+in[áa]cio)\b/i.test(lower) && !/\b(molusco|cefal[óo]pode)\b/i.test(lower)) {
+    usQuery = 'Luiz Inácio Lula da Silva Brazil foreign policy international perception diplomacy global south';
+    academicCore = 'Lula da Silva Brazil foreign policy international relations global diplomacy';
+    usWikiCustom = 'Luiz_Inácio_Lula_da_Silva OR Foreign_relations_of_Brazil';
+    cnTerms.push('卢拉·达席尔瓦', '巴西外交', '国际关系', '金砖国家');
+    deTerms.push('Luiz Inácio Lula da Silva', 'Außenpolitik Brasiliens', 'Internationale Beziehungen');
+    jpTerms.push('ルラ・ダ・シルヴァ', 'ブラジルの国際関係', '外交政策');
+    krTerms.push('루이스 이나시우 룰라 다 시우바', '브라질의 대외 관계', '외교 정책');
+    ruTerms.push('Луис Инасиу Лула да Силва', 'Внешняя политика Бразилии', 'БРИКС');
+    cnWikiCustom = '路易斯·伊纳西奥·卢拉·达席尔瓦 OR 巴西外交';
+    deWikiCustom = 'Luiz_Inácio_Lula_da_Silva OR Brasilianische_Außenpolitik';
+    jpWikiCustom = 'ルイス・イナシオ・ルーラ・ダ・シルヴァ OR ブラジルの国際関係';
+    krWikiCustom = '루이스_이나시우_룰라_다_시우바 OR 브라질';
+    ruWikiCustom = 'Лула_да_Силва,_Луис_Инасиу OR Внешняя_политика_Бразилии';
+    brQuery = 'Luiz Inácio Lula da Silva política externa brasileira percepção internacional diplomacia';
+    brWiki = 'Luiz Inácio Lula da Silva OR Política externa do governo Lula';
+  } else if (/\b(pol[íi]tica\s+externa|diplomacia|geopol[íi]tica|rela[çc][õo]es\s+internacionais|foreign\s+policy|geopolitics|elei[çc][õo]es|democracia)\b/i.test(lower) && !/\b([áa]rtico|arctic|calotas?\s+polares?)\b/i.test(lower)) {
+    academicCore = `${enBase} international relations political science foreign policy`.trim();
+    cnTerms.push('国际关系', '地缘政治', '外交政策');
+    deTerms.push('Internationale Beziehungen', 'Geopolitik', 'Außenpolitik');
+    jpTerms.push('国際関係', '地政学', '外交政策');
+    krTerms.push('국제 관계', '지정학', '외교 정책');
+    ruTerms.push('международные отношения', 'геополитика', 'внешняя политика');
+    cnWikiCustom = '国际关系 OR 地缘政治学';
+    deWikiCustom = 'Internationale_Beziehungen OR Geopolitik';
+    jpWikiCustom = '国際関係論 OR 地政学';
+    krWikiCustom = '국제관계학 OR 지정학';
+    ruWikiCustom = 'Международные_отношения OR Геополитика';
+  }
+
+  // 2. Economia, Política Monetária & Macroeconomia
+  if (/\b(economia|macroeconomia|pol[íi]tica\s+monet[áa]ria|pol[íi]tica\s+fiscal|taxa\s+de\s+juros|infla[çc][ãa]o|banco\s+central|monetary\s+policy|interest\s+rates|inflation|central\s+bank|desenvolvimento\s+econ[ôo]mico|pib|d[íi]vida\s+p[úu]blica)\b/i.test(lower)) {
+    usQuery = `${enBase} monetary policy central bank inflation interest rates macroeconomics`.trim();
+    academicCore = 'monetary policy interest rates inflation targeting central bank macroeconomics';
+    usWikiCustom = 'Monetary_policy OR Inflation_targeting OR Central_bank';
+    cnTerms.push('货币政策', '中央银行', '利率', '通货膨胀', '宏观经济学');
+    deTerms.push('Geldpolitik', 'Zentralbank', 'Leitzins', 'Inflation', 'Makroökonomie');
+    jpTerms.push('金融政策', '中央銀行', '政策金利', 'インフレーション', 'マクロ経済学');
+    krTerms.push('통화 정책', '중앙은행', '기준금리', '인플레이션', '거시경제학');
+    ruTerms.push('денежно-кредитная политика', 'центральный банк', 'процентная ставка', 'инфляция', 'макроэкономика');
+    cnWikiCustom = '货币政策 OR 通货膨胀 OR 中央银行';
+    deWikiCustom = 'Geldpolitik OR Inflation OR Zentralbank';
+    jpWikiCustom = '金融政策 OR インフレーション OR 中央銀行';
+    krWikiCustom = '통화_정책 OR 인플레이션 OR 중앙은행';
+    ruWikiCustom = 'Денежно-кредитная_политика OR Инфляция OR Центральный_банк';
+    brQuery = 'política monetária taxa de juros controle de inflação banco central macroeconomia';
+    brWiki = 'Política monetária OR Metas de inflação';
+  }
+
+  // 3. Arquitetura Civil (Brutalismo, Bioclimática, Contemporânea, Modernista)
+  if (/\b(arquitetura\s+(?:brutalista|bioclim[áa]tica|contempor[âa]nea|moderna|modernista|sustent[áa]vel|civil|urbana)|brutalismo|brutalist\s+architecture|bioclimatic\s+architecture|niemeyer|le\s+corbusier|bauhaus|zaha\s+hadid)\b/i.test(lower)) {
+    usQuery = 'brutalist architecture bioclimatic sustainable contemporary building design';
+    academicCore = 'bioclimatic architecture sustainable building design';
+    usWikiCustom = 'Brutalist architecture';
+    cnTerms.push('粗野主义建筑', '生物气候建筑', '绿色建筑', '现代建筑学');
+    deTerms.push('Brutalismus', 'Bioklimatische Architektur', 'Nachhaltiges Bauen', 'Moderne Architektur');
+    jpTerms.push('ブルータリズム', '環境共生建築', '現代建築', 'サステナブル建築');
+    krTerms.push('브루탈리즘', '친환경 건축', '현대 건축', '건축학');
+    ruTerms.push('брутализм', 'биоклиматическая архитектура', 'современная архитектура');
+    cnWikiCustom = '粗野主义';
+    deWikiCustom = 'Brutalismus';
+    jpWikiCustom = 'ブルータリズム';
+    krWikiCustom = '브루탈리즘';
+    ruWikiCustom = 'Брутализм';
+    brQuery = 'arquitetura brutalista e arquitetura bioclimática contemporânea sustentável';
+    brWiki = 'Arquitetura brutalista';
+  }
+
+  // 4. Urbanismo, Planejamento Urbano & Mobilidade
+  if (/\b(urbanismo|planejamento\s+urbano|cidades?\s+compactas?|mobilidade\s+urbana|mobilidade\s+sustent[áa]vel|urban\s+planning|compact\s+cities|transit[-\s]oriented|gentrifica[çc][ãa]o|zoneamento)\b/i.test(lower)) {
+    usQuery = 'urban planning compact cities transit-oriented development sustainable urban mobility';
+    academicCore = 'urban planning compact city sustainable mobility';
+    usWikiCustom = 'Urban planning';
+    cnTerms.push('城市规划', '紧凑城市', '公共交通导向型开发', '可持续城市交通');
+    deTerms.push('Stadtplanung', 'Stadt der kurzen Wege', 'Nachhaltige Mobilität', 'Urbanismus');
+    jpTerms.push('都市計画', 'コンパクトシティ', '公共交通指向型開発', '都市交通');
+    krTerms.push('도시계획', '압축도시', '대중교통 지향형 개발', '지속가능한 교통');
+    ruTerms.push('градостроительство', 'компактный город', 'урбанистика', 'устойчивый транспорт');
+    cnWikiCustom = '城市规划';
+    deWikiCustom = 'Stadtplanung';
+    jpWikiCustom = '都市計画';
+    krWikiCustom = '도시계획';
+    ruWikiCustom = 'Градостроительство';
+    brQuery = 'planejamento urbano urbanismo cidades compactas mobilidade urbana sustentável';
+    brWiki = 'Planejamento urbano';
+  }
+
+  // 5. Geografia, Geopolítica do Ártico, Clima & Geomorfologia
+  if (/\b(geografia|[áa]rtico|arctic|calotas?\s+polares?|degelo|rotas?\s+mar[íi]timas?|geomorfologia|bacia\s+hidrogr[áa]fica|relevo|polar\s+ice|northern\s+sea\s+route)\b/i.test(lower)) {
+    usQuery = 'Arctic geopolitics polar ice melting Northern Sea Route maritime geography climate change';
+    academicCore = 'Arctic sea ice Northern Sea Route geopolitics';
+    usWikiCustom = 'Northern Sea Route';
+    cnTerms.push('北极航道', '北极地缘政治', '极地冰盖融化', '自然地理学');
+    deTerms.push('Nordostpassage', 'Arktis Geopolitik', 'Polkappen Abschmelzen', 'Physische Geographie');
+    jpTerms.push('北極海航路', '北極圏', '海氷減少', '自然地理学');
+    krTerms.push('북극항로', '북극 지정학', '빙하 해빙', '자연지리학');
+    ruTerms.push('Северный морской путь', 'Арктика', 'таяние льдов', 'физическая география');
+    cnWikiCustom = '北方海路';
+    deWikiCustom = 'Nordostpassage';
+    jpWikiCustom = '北極海航路';
+    krWikiCustom = '북극항로';
+    ruWikiCustom = 'Северный морской путь';
+    brQuery = 'geografia geopolítica do Ártico degelo calotas polares rotas marítimas';
+    brWiki = 'Passagem do Nordeste';
+  }
+
+  // 6. Desenvolvimento de Software, Microsserviços, Linguagens & Sistemas Distribuídos
+  if (domain === 'software_cs' && !isOntologyOrPalantir && !isModelBenchmark && /\b(desenvolvimento|software|microsservi[çc]os|microservices|event[-\s]driven|kafka|rust|golang|python|java|api|distributed|consenso|consensus|raft|paxos|database|banco\s+de\s+dados|kernel|linux|ebpf|xdp|ftrace|p2p|kademlia|quic|hnsw)\b/i.test(lower)) {
+    academicCore = 'microservices event-driven distributed architecture';
+    usWikiCustom = 'Microservices';
+    cnTerms.push('微服务架构', '事件驱动架构', '分布式系统', '软件工程', '高并发');
+    deTerms.push('Microservices', 'Ereignisgesteuerte Architektur', 'Verteilte Systeme', 'Softwaretechnik');
+    jpTerms.push('マイクロサービス', 'イベント駆動型アーキテクチャ', '分散システム', 'ソフトウェア工学');
+    krTerms.push('마이크로서비스', '이벤트 기반 아키텍처', '분산 컴퓨팅', '소프트웨어 공학');
+    ruTerms.push('микросервисная архитектура', 'событийно-ориентированная архитектура', 'распределенные системы', 'разработка ПО');
+    cnWikiCustom = '微服务';
+    deWikiCustom = 'Microservices';
+    jpWikiCustom = 'マイクロサービス';
+    krWikiCustom = '마이크로서비스';
+    ruWikiCustom = 'Микросервисная архитектура';
+    brWiki = 'Microsserviços';
+  }
 
   if (isOntologyOrPalantir) {
     if (/\bpalantir\b/i.test(lower)) {
       usQuery = 'Palantir Foundry AIP Ontology enterprise AI knowledge graph architecture';
-      academicCore = 'enterprise ontology knowledge graph large language model AI decision making';
+      academicCore = 'enterprise ontology knowledge graph LLM';
       cnTerms.push('Palantir', 'Foundry', 'AIP', '本体', '知识图谱', '企业级AI', '语义层');
       deTerms.push('Palantir Foundry', 'Ontologie Informatik', 'Wissensgraph', 'Künstliche Intelligenz');
       jpTerms.push('Palantir', 'オントロジー', 'ナレッジグラフ', '知識グラフ', '人工知能');
       krTerms.push('Palantir', '온톨로지', '지식 그래프', '인공지능');
       ruTerms.push('Palantir', 'Foundry', 'онтология данных', 'граф знаний', 'ИИ', 'архитектура');
-      cnWikiCustom = 'Palantir OR 知识图谱 OR 本体_(信息科学)';
-      deWikiCustom = 'Palantir_Technologies OR Ontologie_(Informatik) OR Wissensgraph';
-      jpWikiCustom = 'パランティア・テクノロジーズ OR オントロジー_(情報科学) OR ナレッジグラフ';
-      krWikiCustom = '팔란티어_테크놀로지스 OR 온톨로지 OR 지식_그래프';
-      ruWikiCustom = 'Palantir OR Онтология_(информатика) OR Граф_знаний';
+      cnWikiCustom = '知识图谱';
+      deWikiCustom = 'Palantir Technologies';
+      jpWikiCustom = 'パランティア・テクノロジーズ';
+      krWikiCustom = '팔란티어 테크놀로지스';
+      ruWikiCustom = 'Palantir';
       brQuery = 'Palantir Foundry AIP ontologia de dados inteligência artificial grafo de conhecimento';
-      brWiki = 'Palantir Technologies OR "Ontologia (ciência da computação)"';
+      brWiki = 'Palantir Technologies';
     } else {
       usQuery = `${enBase} ontology knowledge graph semantic model AI`.trim();
-      academicCore = 'ontology knowledge graph artificial intelligence semantic reasoning LLM';
+      academicCore = 'ontology knowledge graph artificial intelligence';
       cnTerms.push('本体论', '知识图谱', '语义建模', '人工智能', '大模型');
       deTerms.push('Ontologie Informatik', 'Wissensgraph', 'Semantisches Netz', 'Künstliche Intelligenz');
       jpTerms.push('オントロジー', 'ナレッジグラフ', '知識グラフ', '人工知能');
       krTerms.push('온톨로지', '지식 그래프', '시맨틱 웹', '인공지능');
       ruTerms.push('онтология', 'граф знаний', 'семантическая модель', 'искусственный интеллект');
-      cnWikiCustom = '本体_(信息科学) OR 知识图谱';
-      deWikiCustom = 'Ontologie_(Informatik) OR Wissensgraph';
-      jpWikiCustom = 'オントロジー_(情報科学) OR ナレッジグラフ';
-      krWikiCustom = '온톨로지 OR 지식_그래프';
-      ruWikiCustom = 'Онтология_(информатика) OR Граф_знаний';
+      cnWikiCustom = '知识图谱';
+      deWikiCustom = 'Wissensgraph';
+      jpWikiCustom = 'ナレッジグラフ';
+      krWikiCustom = '지식 그래프';
+      ruWikiCustom = 'Граф знаний';
       brQuery = 'ontologia ciência da computação inteligência artificial grafo de conhecimento';
-      brWiki = '"Ontologia (ciência da computação)" OR "Grafo de conhecimento"';
+      brWiki = 'Grafo de conhecimento';
     }
   } else if (isModelBenchmark) {
     usQuery = `${enBase} SWE-bench LiveBench LMSYS evaluation`.trim();
-    academicCore = 'large language model code generation software engineering benchmark evaluation';
+    academicCore = 'large language model code generation benchmark';
     cnTerms.push('大模型', '编程', '代码生成', '评测', '基准', 'DeepSeek', 'Qwen', 'OpenCompass');
     deTerms.push('Großes Sprachmodell', 'Künstliche Intelligenz', 'Programmierung', 'Benchmark');
     jpTerms.push('大規模言語モデル', '生成AI', 'プログラミング', 'ベンチマーク');
     krTerms.push('대규모 언어 모델', '생성형 인공지능', '코드 생성', '벤치마크');
     ruTerms.push('большие языковые модели', 'LLM', 'программирование', 'бенчмарк', 'MERA', 'YandexGPT', 'GigaChat');
-    cnWikiCustom = '大语言模型 OR DeepSeek OR 通义千问';
-    deWikiCustom = 'Großes_Sprachmodell OR Künstliche_Intelligenz';
-    jpWikiCustom = '大規模言語モデル OR 生成的人工知能';
-    krWikiCustom = '대규모_언어_모델 OR 생성형_인공지능';
-    ruWikiCustom = 'Большая_языковая_модель OR GigaChat OR YandexGPT';
+    cnWikiCustom = '大语言模型';
+    deWikiCustom = 'Großes Sprachmodell';
+    jpWikiCustom = '大規模言語モデル';
+    krWikiCustom = '대규모 언어 모델';
+    ruWikiCustom = 'Большая языковая модель';
     brQuery = 'modelos de inteligência artificial programação desenvolvimento de software LLM benchmark';
     brWiki = 'Grande modelo de linguagem';
   }
   if (/\b(3d|cad|modeling|mesh|sculpting|blender|freecad)\b/i.test(lower)) {
-    academicCore = '3D CAD modeling geometric kernel open source mesh generation';
+    academicCore = '3D CAD modeling open source mesh';
     cnTerms.push('开源', '三维建模', 'CAD', '几何内核', '渲染引擎');
     deTerms.push('3D-Modellierung', 'CAD', 'Freie Software', 'Computergrafik');
     jpTerms.push('3DCGソフトウェア', '3次元コンピュータグラフィックス', 'CAD', 'オープンソース');
     krTerms.push('3차원 모델링', '컴퓨터 지원 설계', '오픈 소스', '블렌더');
     ruTerms.push('3D моделирование', 'САПР', 'открытый исходный код', 'геометрическое ядро', 'OpenCASCADE');
-    cnWikiCustom = '三维建模 OR Blender OR FreeCAD';
-    deWikiCustom = '3D-Modellierung OR Blender_(Software) OR FreeCAD';
-    jpWikiCustom = '3DCGソフトウェア OR Blender OR FreeCAD';
-    krWikiCustom = '3차원_모델링 OR 블렌더_(소프트웨어) OR 프리캐드';
-    ruWikiCustom = 'Трёхмерная_графика OR Blender OR FreeCAD';
+    cnWikiCustom = '三维建模';
+    deWikiCustom = '3D-Modellierung';
+    jpWikiCustom = '3DCGソフトウェア';
+    krWikiCustom = '3차원 모델링';
+    ruWikiCustom = 'Трёхмерная графика';
     brQuery = 'modelagem 3D código aberto CAD Blender FreeCAD computação gráfica';
-    brWiki = '"Modelagem 3D" OR Blender OR FreeCAD';
+    brWiki = 'Modelagem 3D';
   }
-  if (/\b(nuclear|fission|fusion|reactor)\b/i.test(lower)) {
-    cnTerms.push('核反应堆', '核裂变', '核聚变', '反应堆物理');
-    deTerms.push('Kernreaktor', 'Kernspaltung', 'Kernfusion', 'Reaktorphysik');
-    jpTerms.push('原子炉', '核分裂反応', '核融合炉', '原子力工学');
-    krTerms.push('원자로', '핵분열', '핵융합', '원자력');
-    ruTerms.push('ядерный реактор', 'деление ядра', 'термоядерный синтез', 'ВВЭР', 'Росатом');
-    cnWikiCustom = '核反应堆 OR 核裂变';
-    deWikiCustom = 'Kernreaktor OR Kernspaltung';
-    jpWikiCustom = '原子炉 OR 核分裂反応';
-    krWikiCustom = '원자로 OR 핵분열';
-    ruWikiCustom = 'Ядерный_реактор OR Деление_ядра';
-    brWiki = '"Reator nuclear" OR "Fissão nuclear"';
+  if (/\b(nuclear|fission|fusion|reactor|tokamak|iter|smr)\b/i.test(lower)) {
+    usQuery = 'nuclear fusion magnetic confinement tokamak ITER small modular reactors nuclear physics';
+    academicCore = 'nuclear fusion tokamak magnetic confinement';
+    usWikiCustom = 'Tokamak';
+    cnTerms.push('托卡马克', '核聚变', '磁约束聚变', '核反应堆', '核物理学');
+    deTerms.push('Kernfusion', 'Tokamak', 'ITER', 'Magnetischer Einschluss', 'Kernphysik');
+    jpTerms.push('核融合炉', 'トカマク型', 'ITER', '磁場閉じ込め方式', '原子核物理学');
+    krTerms.push('핵융합', '토카막', 'ITER', '소형 모듈 원자로', '핵물리학');
+    ruTerms.push('термоядерный синтез', 'токамак', 'ИТЭР', 'ядерный реактор', 'ядерная физика');
+    cnWikiCustom = '托卡马克';
+    deWikiCustom = 'Tokamak';
+    jpWikiCustom = 'トカマク型';
+    krWikiCustom = '토카막';
+    ruWikiCustom = 'Токамак';
+    brQuery = 'física nuclear fusão nuclear confinamento magnético tokamak ITER reatores nucleares';
+    brWiki = 'Tokamak';
   }
   if (/\b(security|vulnerability|cve|exploit|reverse\s+engineering|cybersecurity|attack|rootkit)\b/i.test(lower)) {
     cnTerms.push('漏洞分析', '安全研究', '渗透测试', '逆向工程');
@@ -431,29 +675,26 @@ function buildMultiPolarQueries(rawQuery) {
     jpTerms.push('コンピュータセキュリティ', '脆弱性', 'リバースエンジニアリング');
     krTerms.push('컴퓨터 보안', '취약점', '역공학', '익스플로잇');
     ruTerms.push('уязвимость', 'эксплойт', 'информационная безопасность', 'реверс-инжиниринг');
-    deWikiCustom = deWikiCustom || 'Informationssicherheit OR Exploit';
-    jpWikiCustom = jpWikiCustom || 'コンピュータセキュリティ OR 脆弱性_(コンピュータ)';
-    krWikiCustom = krWikiCustom || '컴퓨터_보안 OR 보안_취약점';
+    deWikiCustom = deWikiCustom || 'Informationssicherheit';
+    jpWikiCustom = jpWikiCustom || 'コンピュータセキュリティ';
+    krWikiCustom = krWikiCustom || '컴퓨터 보안';
   }
-  if (/\b(distributed|consensus|raft|paxos|database|network|kernel|linux)\b/i.test(lower)) {
-    cnTerms.push('分布式系统', '共识算法', '高并发架构', '内核', '性能基准');
-    deTerms.push('Verteilte Systeme', 'Konsensalgorithmus', 'Linux-Kernel', 'Datenbank');
-    jpTerms.push('分散システム', '合意形成アルゴリズム', 'Linuxカーネル');
-    krTerms.push('분산 컴퓨팅', '합의 알고리즘', '리눅스 커널');
-    ruTerms.push('распределенные системы', 'алгоритм консенсуса', 'высоконагруженные системы', 'ядро Linux');
-  }
-  if (/\b(quantum|quântica|quantico|qubit)\b/i.test(lower)) {
-    cnTerms.push('量子计算', '量子比特', '量子纠缠');
-    deTerms.push('Quantencomputer', 'Quanteninformatik', 'Qubit');
-    jpTerms.push('量子コンピュータ', '量子ビット', '量子力学');
-    krTerms.push('양자 컴퓨터', '큐비트', '양자역학');
-    ruTerms.push('квантовый компьютер', 'кубит', 'квантовые вычисления');
-    cnWikiCustom = cnWikiCustom || '量子计算';
-    deWikiCustom = deWikiCustom || 'Quantencomputer';
-    jpWikiCustom = jpWikiCustom || '量子コンピュータ';
-    krWikiCustom = krWikiCustom || '양자_컴퓨터';
-    ruWikiCustom = ruWikiCustom || 'Квантовый_компьютер';
-    brWiki = 'Computador quântico';
+  if (/\b(quantum|quântica|quantico|qubit|qubits|supercondutor\w*|superconducting|surface\s+codes?)\b/i.test(lower)) {
+    usQuery = 'quantum error correction surface codes superconducting qubits fault-tolerant quantum computing';
+    academicCore = 'quantum error correction superconducting qubits';
+    usWikiCustom = 'Quantum error correction';
+    cnTerms.push('量子纠错', '表面码', '超导量子比特', '量子计算');
+    deTerms.push('Quantenfehlerkorrektur', 'Supraleitendes Qubit', 'Quantencomputer', 'Quanteninformatik');
+    jpTerms.push('量子誤り訂正', '表面符号', '超伝導量子ビット', '量子コンピュータ');
+    krTerms.push('양자 오류 정정', '초전도 큐비트', '양자 컴퓨터', '큐비트');
+    ruTerms.push('квантовая коррекция ошибок', 'сверхпроводящие кубиты', 'квантовый компьютер', 'кубит');
+    cnWikiCustom = cnWikiCustom || '量子纠错';
+    deWikiCustom = deWikiCustom || 'Quantenfehlerkorrektur';
+    jpWikiCustom = jpWikiCustom || '量子誤り訂正';
+    krWikiCustom = krWikiCustom || '양자 오류 정정';
+    ruWikiCustom = ruWikiCustom || 'Квантовая коррекция ошибок';
+    brQuery = 'computação quântica correção de erros quânticos códigos de superfície qubits supercondutores';
+    brWiki = 'Correção de erro quântico';
   }
   if (/\b(gunpowder|explosive|chemistry|synthesis|napalm)\b/i.test(lower)) {
     cnTerms.push('化学合成', '材料科学', '反应机理', '热力学');
@@ -465,38 +706,26 @@ function buildMultiPolarQueries(rawQuery) {
 
   const coreTokens = enBase
     .split(/\s+/)
-    .filter((w) => w.length >= 2 && !/^(strongest|best|top|sota|current|latest|comparison|synthesis|composition|2026)$/i.test(w))
+    .filter((w) => w.length >= 2 && !/^(strongest|best|top|sota|current|latest|comparison|synthesis|composition|2026|como|visto|mundo|qual|quais)$/i.test(w))
     .slice(0, 6);
   const coreJoined = coreTokens.join(' ') || enBase;
 
-  if (cnTerms.length === 0) {
-    cnTerms.push('技术架构', '基准评测', '学术研究');
-  }
-  if (deTerms.length === 0) {
-    deTerms.push(coreJoined, 'Informatik', 'Architektur');
-  }
-  if (jpTerms.length === 0) {
-    jpTerms.push(coreJoined, 'コンピュータ科学', '技術');
-  }
-  if (krTerms.length === 0) {
-    krTerms.push(coreJoined, '컴퓨터 과학', '아키텍처');
-  }
-  if (ruTerms.length === 0) {
-    ruTerms.push('архитектура', 'бенчмарк', 'технический анализ');
-  }
-
+  // ZERO hardcode de ciência da computação/software: se não bateu em uma regra específica acima,
+  // mantém o núcleo real da consulta do usuário (que será traduzido dinamicamente para cada idioma em tempo de execução).
   return {
+    domain,
     us: usQuery,
-    cn: `${cnTerms.slice(0, 8).join(' ')} ${coreTokens.slice(0, 3).join(' ')}`.trim(),
-    cnWiki: cnWikiCustom || `${coreTokens.slice(0, 2).join(' ')} ${cnTerms.slice(0, 2).join(' ')}`.trim(),
-    de: `${deTerms.slice(0, 5).join(' ')} ${coreTokens.slice(0, 3).join(' ')}`.trim(),
-    deWiki: deWikiCustom || coreJoined,
-    jp: `${jpTerms.slice(0, 5).join(' ')} ${coreTokens.slice(0, 3).join(' ')}`.trim(),
-    jpWiki: jpWikiCustom || `${coreTokens.slice(0, 2).join(' ')} ${jpTerms[0] || ''}`.trim(),
-    kr: `${krTerms.slice(0, 5).join(' ')} ${coreTokens.slice(0, 3).join(' ')}`.trim(),
-    krWiki: krWikiCustom || `${coreTokens.slice(0, 2).join(' ')} ${krTerms[0] || ''}`.trim(),
-    ru: `${ruTerms.slice(0, 7).join(' ')} ${coreTokens.slice(0, 3).join(' ')}`.trim(),
-    ruWiki: ruWikiCustom || `${coreTokens.slice(0, 2).join(' ')} ${ruTerms.slice(0, 2).join(' ')}`.trim(),
+    usWiki: usWikiCustom || coreJoined,
+    cn: cnTerms.length > 0 ? `${cnTerms.slice(0, 8).join(' ')} ${coreTokens.slice(0, 2).join(' ')}`.trim() : coreJoined,
+    cnWiki: cnWikiCustom || (cnTerms.length > 0 ? cnTerms.slice(0, 2).join(' ') : coreJoined),
+    de: deTerms.length > 0 ? `${deTerms.slice(0, 6).join(' ')}`.trim() : coreJoined,
+    deWiki: deWikiCustom || (deTerms.length > 0 ? deTerms.slice(0, 2).join(' ') : coreJoined),
+    jp: jpTerms.length > 0 ? `${jpTerms.slice(0, 6).join(' ')}`.trim() : coreJoined,
+    jpWiki: jpWikiCustom || (jpTerms.length > 0 ? jpTerms.slice(0, 2).join(' ') : coreJoined),
+    kr: krTerms.length > 0 ? `${krTerms.slice(0, 6).join(' ')}`.trim() : coreJoined,
+    krWiki: krWikiCustom || (krTerms.length > 0 ? krTerms.slice(0, 2).join(' ') : coreJoined),
+    ru: ruTerms.length > 0 ? `${ruTerms.slice(0, 8).join(' ')}`.trim() : coreJoined,
+    ruWiki: ruWikiCustom || (ruTerms.length > 0 ? ruTerms.slice(0, 2).join(' ') : coreJoined),
     br: brQuery,
     brWiki,
     enCore: coreJoined,
@@ -1012,9 +1241,119 @@ function reconstructOpenAlexAbstract(invertedIndex) {
   return words.filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
 }
 
+const academicSearchCache = new Map();
+const wikiSearchCache = new Map();
+
+let activeWikiRequests = 0;
+const wikiWaitQueue = [];
+
+async function withWikiConcurrencyLimit(fn) {
+  if (activeWikiRequests >= 2) {
+    await new Promise((resolve) => wikiWaitQueue.push(resolve));
+  }
+  activeWikiRequests += 1;
+  try {
+    return await fn();
+  } finally {
+    await new Promise((r) => setTimeout(r, 55));
+    activeWikiRequests = Math.max(0, activeWikiRequests - 1);
+    if (wikiWaitQueue.length > 0) {
+      const next = wikiWaitQueue.shift();
+      next();
+    }
+  }
+}
+
+const COUNTRY_CODE_TO_ACADEMIC_CONTEXT = {
+  US: 'United States',
+  CN: 'China',
+  DE: 'Germany',
+  JP: 'Japan',
+  KR: 'South Korea',
+  RU: 'Russia',
+  BR: 'Brazil'
+};
+
+/**
+ * Fallback acadêmico resiliente via CrossRef Polite Pool API (50 req/s gratuitos sem chave)
+ * acionado automaticamente quando o orçamento diário por IP do OpenAlex (HTTP 429) é atingido.
+ */
+async function searchCrossRefAcademicFallback(cleanQuery, {
+  httpRequest = request,
+  timeoutMs = 4500,
+  count = 3,
+  countryCode = '',
+  countryPole = '',
+  countryBadge = '',
+  requiredTokens = []
+} = {}) {
+  const countryHint = COUNTRY_CODE_TO_ACADEMIC_CONTEXT[countryCode] || '';
+  const effectiveQuery = countryHint ? `${cleanQuery} ${countryHint}` : cleanQuery;
+  const fetchRows = Math.max(count * 3, 8);
+  const apiUrl = `https://api.crossref.org/works?query=${encodeURIComponent(effectiveQuery)}&rows=${fetchRows}&select=DOI,title,URL,abstract,published,container-title,publisher,author`;
+
+  try {
+    const res = await httpRequest(apiUrl, {
+      method: 'GET',
+      headers: {
+        'User-Agent': 'DeepEvil/1.0 (https://github.com/eriktonon/deep-evil; mailto:research@deepevil.org)',
+        'Accept': 'application/json'
+      },
+      headersTimeout: timeoutMs,
+      bodyTimeout: timeoutMs
+    });
+    if (res.statusCode !== 200) return [];
+    const data = await res.body.json();
+    const items = Array.isArray(data?.message?.items) ? data.message.items : [];
+    const candidates = [];
+    const prefix = countryBadge ? `${countryBadge} ` : '';
+
+    for (const item of items) {
+      const rawTitle = Array.isArray(item?.title) && item.title[0] ? String(item.title[0]).replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim() : '';
+      const rawUrl = item?.URL || (item?.DOI ? `https://doi.org/${item.DOI}` : '');
+      if (!rawTitle || !rawUrl || !String(rawUrl).startsWith('http')) continue;
+
+      const rawAbstract = String(item?.abstract || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      const hay = `${rawTitle} ${rawAbstract}`;
+
+      // Polos internacionais não aceitam títulos redigidos em português
+      if (countryPole && countryPole !== 'BR' && /[ãõç]/i.test(hay) && /\b(para|como|sobre|pelos|pelas|entre|estudo|análise|avaliação|brasileir[oa])\b/i.test(hay)) {
+        continue;
+      }
+
+      if (requiredTokens.length > 0) {
+        const lowerHay = hay.toLowerCase();
+        const hasTopicMatch = requiredTokens.some((tok) => lowerHay.includes(tok));
+        if (!hasTopicMatch) continue;
+      }
+
+      const yearParts = item?.published?.['date-parts']?.[0];
+      const year = Array.isArray(yearParts) && yearParts[0] ? ` (${yearParts[0]})` : '';
+      const venueName = (Array.isArray(item?.['container-title']) && item['container-title'][0]) || item?.publisher || '';
+      const venue = venueName ? ` [${venueName}]` : '';
+      const affName = item?.author?.[0]?.affiliation?.[0]?.name || '';
+      const instTag = affName ? ` — ${affName.slice(0, 90)}` : '';
+      const description = rawAbstract.length >= 60
+        ? `${prefix}${rawAbstract.slice(0, 420)}`
+        : `${prefix}Peer-reviewed research article: ${rawTitle}${year}${venue}${instTag}. DOI: ${item?.DOI || 'verified'}.`;
+
+      candidates.push({
+        url: String(rawUrl),
+        title: `${prefix}${rawTitle}${year}${venue}${instTag}`,
+        description,
+        countryPole: countryPole || countryCode || 'GLOBAL'
+      });
+      if (candidates.length >= count) break;
+    }
+    return candidates;
+  } catch (_) {
+    return [];
+  }
+}
+
 /**
  * Pesquisa literatura científica e de engenharia global via OpenAlex API (250M+ artigos IEEE, ACM, ArXiv, Springer, Nature, ScienceDirect),
- * suportando filtro geopolítico por código de país da instituição (`US`, `CN`, `RU`).
+ * suportando filtro geopolítico por código de país da instituição (`US`, `CN`, `DE`, `JP`, `KR`, `RU`, `BR`) e fallback automático para CrossRef Polite Pool.
  */
 async function searchOpenAlexGlobal(query, {
   httpRequest = request,
@@ -1027,53 +1366,104 @@ async function searchOpenAlexGlobal(query, {
   const cleanQuery = String(query || '').trim();
   if (!cleanQuery) return [];
 
+  const cacheKey = `${countryCode}::${countryPole}::${count}::${cleanQuery}`;
+  if (httpRequest === request && academicSearchCache.has(cacheKey)) {
+    return academicSearchCache.get(cacheKey);
+  }
+
+  const requiredTokens = cleanQuery
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length >= 4 && !/^(como|visto|mundo|qual|quais|sobre|para|pela|pelo|world|seen|global|international|foreign|policy|relations|diplomacy|perception|analysis|study|research|science|system|systems|architecture|development|contemporary|modern|model|models|large|data|open|source|code|engineering|sustainable|urban|planning|compact|cities)$/i.test(w));
+
   try {
+    const fetchCount = Math.max(count * 2, 6);
     const filterParam = countryCode ? `&filter=institutions.country_code:${encodeURIComponent(countryCode)}` : '';
-    const apiUrl = `https://api.openalex.org/works?search=${encodeURIComponent(cleanQuery)}${filterParam}&per-page=${count}`;
+    const apiUrl = `https://api.openalex.org/works?search=${encodeURIComponent(cleanQuery)}${filterParam}&per-page=${fetchCount}`;
     const res = await httpRequest(apiUrl, {
       method: 'GET',
       headers: {
-        'User-Agent': 'DeepEvil/1.0 (Global Research Engine; mailto:research@deepevil.local)',
+        'User-Agent': 'DeepEvil/1.0 (https://github.com/eriktonon/deep-evil; mailto:research@deepevil.org)',
         'Accept': 'application/json'
       },
       headersTimeout: timeoutMs,
       bodyTimeout: timeoutMs
     });
-    if (res.statusCode !== 200) return [];
-    const data = await res.body.json();
-    const works = Array.isArray(data?.results) ? data.results : [];
-    const candidates = [];
 
-    for (const w of works) {
-      if (!w?.title) continue;
-      const targetUrl =
-        w?.primary_location?.landing_page_url ||
-        w?.open_access?.oa_url ||
-        w?.doi ||
-        w?.id;
-      if (!targetUrl || !String(targetUrl).startsWith('http')) continue;
+    if (res.statusCode === 200) {
+      const data = await res.body.json();
+      const works = Array.isArray(data?.results) ? data.results : [];
+      const candidates = [];
 
-      const abstractText = reconstructOpenAlexAbstract(w.abstract_inverted_index);
-      const year = w.publication_year ? ` (${w.publication_year})` : '';
-      const venue = w?.primary_location?.source?.display_name ? ` [${w.primary_location.source.display_name}]` : '';
-      const instName = w?.authorships?.[0]?.institutions?.[0]?.display_name || '';
-      const instTag = instName ? ` — ${instName}` : '';
-      const prefix = countryBadge ? `${countryBadge} ` : '';
-      const description = abstractText
-        ? `${prefix}${abstractText}`
-        : `${prefix}Peer-reviewed research article: ${w.title}${year}${venue}${instTag}. Cited by ${w.cited_by_count || 0} global works.`;
+      for (const w of works) {
+        if (!w?.title) continue;
+        // Polos internacionais (US, CN, DE, JP, KR, RU) não devem retornar papers em português de coautores brasileiros desconexos
+        if (countryPole && countryPole !== 'BR' && String(w.language || '').toLowerCase() === 'pt') {
+          continue;
+        }
+        const targetUrl =
+          w?.primary_location?.landing_page_url ||
+          w?.open_access?.oa_url ||
+          w?.doi ||
+          w?.id;
+        if (!targetUrl || !String(targetUrl).startsWith('http')) continue;
 
-      candidates.push({
-        url: String(targetUrl),
-        title: `${prefix}${w.title}${year}${venue}${instTag}`,
-        description,
-        countryPole: countryPole || countryCode || 'GLOBAL'
-      });
+        const abstractText = reconstructOpenAlexAbstract(w.abstract_inverted_index);
+        if (requiredTokens.length > 0) {
+          const hay = `${w.title} ${abstractText}`.toLowerCase();
+          const hasTopicMatch = requiredTokens.some((tok) => hay.includes(tok));
+          if (!hasTopicMatch) continue;
+        }
+
+        const year = w.publication_year ? ` (${w.publication_year})` : '';
+        const venue = w?.primary_location?.source?.display_name ? ` [${w.primary_location.source.display_name}]` : '';
+        const instName = w?.authorships?.[0]?.institutions?.[0]?.display_name || '';
+        const instTag = instName ? ` — ${instName}` : '';
+        const prefix = countryBadge ? `${countryBadge} ` : '';
+        const description = abstractText
+          ? `${prefix}${abstractText}`
+          : `${prefix}Peer-reviewed research article: ${w.title}${year}${venue}${instTag}. Cited by ${w.cited_by_count || 0} global works.`;
+
+        candidates.push({
+          url: String(targetUrl),
+          title: `${prefix}${w.title}${year}${venue}${instTag}`,
+          description,
+          countryPole: countryPole || countryCode || 'GLOBAL'
+        });
+        if (candidates.length >= count) break;
+      }
+
+      if (candidates.length > 0) {
+        if (httpRequest === request) {
+          if (academicSearchCache.size > 400) academicSearchCache.clear();
+          academicSearchCache.set(cacheKey, candidates);
+        }
+        return candidates;
+      }
+    } else if (res.body && typeof res.body.dump === 'function') {
+      await res.body.dump().catch(() => {});
     }
-    return candidates;
   } catch (_) {
-    return [];
+    // Segue para o fallback CrossRef
   }
+
+  if (httpRequest !== request) return [];
+
+  const crossRefCandidates = await searchCrossRefAcademicFallback(cleanQuery, {
+    httpRequest,
+    timeoutMs,
+    count,
+    countryCode,
+    countryPole,
+    countryBadge,
+    requiredTokens
+  });
+  if (crossRefCandidates.length > 0) {
+    if (academicSearchCache.size > 400) academicSearchCache.clear();
+    academicSearchCache.set(cacheKey, crossRefCandidates);
+  }
+  return crossRefCandidates;
 }
 
 /**
@@ -1131,7 +1521,8 @@ async function searchHabrRussia(query, {
 }
 
 /**
- * Pesquisa enciclopédica técnica diretamente em um idioma/polo específico (`en`, `zh`, `ru`).
+ * Pesquisa enciclopédica técnica diretamente em um idioma/polo específico (`en`, `zh`, `de`, `ja`, `ko`, `ru`, `pt`)
+ * com controle de concorrência gentil (Wikimedia Polite Pool) e cache em memória.
  */
 async function searchWikipediaByLang(query, lang = 'en', {
   httpRequest = request,
@@ -1140,42 +1531,71 @@ async function searchWikipediaByLang(query, lang = 'en', {
   countryPole = '',
   countryBadge = ''
 } = {}) {
-  const cleanQuery = String(query || '').trim();
+  const cleanQuery = String(query || '')
+    .replace(/\s+OR\s+.+$/i, '')
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
   if (!cleanQuery) return [];
 
-  try {
-    const apiUrl = `https://${lang}.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(cleanQuery)}&utf8=&format=json&srlimit=${count}`;
-    const res = await httpRequest(apiUrl, {
-      method: 'GET',
-      headers: {
-        'User-Agent': 'DeepEvil/1.0 (Global Research Engine)',
-        'Accept-Language': GLOBAL_ACCEPT_LANGUAGE
-      },
-      headersTimeout: timeoutMs,
-      bodyTimeout: timeoutMs
-    });
-    if (res.statusCode !== 200) return [];
-    const data = await res.body.json();
-    const searchItems = Array.isArray(data?.query?.search) ? data.query.search : [];
-    const prefix = countryBadge ? `${countryBadge} ` : '';
-    const candidates = [];
-
-    for (const s of searchItems) {
-      if (!s?.title) continue;
-      const snippetClean = String(s.snippet || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
-      candidates.push({
-        url: `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(String(s.title).replace(/ /g, '_'))}`,
-        title: `${prefix}${s.title} — Wikipedia (${lang.toUpperCase()})`,
-        description: snippetClean.length >= 50
-          ? `${prefix}${snippetClean}`
-          : `${prefix}${s.title} — Technical encyclopedia article (${lang.toUpperCase()}). ${snippetClean}`,
-        countryPole: countryPole || lang.toUpperCase()
-      });
-    }
-    return candidates;
-  } catch (_) {
-    return [];
+  const cacheKey = `${lang}::${countryPole}::${count}::${cleanQuery}`;
+  if (httpRequest === request && wikiSearchCache.has(cacheKey)) {
+    return wikiSearchCache.get(cacheKey);
   }
+
+  const runFetch = async () => {
+    const apiUrl = `https://${lang}.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(cleanQuery)}&utf8=&format=json&srlimit=${count}`;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const res = await httpRequest(apiUrl, {
+          method: 'GET',
+          headers: {
+            'User-Agent': 'DeepEvil/1.0 (https://github.com/eriktonon/deep-evil; mailto:research@deepevil.org)',
+            'Accept': 'application/json',
+            'Accept-Language': GLOBAL_ACCEPT_LANGUAGE
+          },
+          headersTimeout: timeoutMs,
+          bodyTimeout: timeoutMs
+        });
+        if (res.statusCode === 200) {
+          const data = await res.body.json();
+          const searchItems = Array.isArray(data?.query?.search) ? data.query.search : [];
+          const prefix = countryBadge ? `${countryBadge} ` : '';
+          const candidates = [];
+
+          for (const s of searchItems) {
+            if (!s?.title) continue;
+            const snippetClean = String(s.snippet || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+            candidates.push({
+              url: `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(String(s.title).replace(/ /g, '_'))}`,
+              title: `${prefix}${s.title} — Wikipedia (${lang.toUpperCase()})`,
+              description: snippetClean.length >= 50
+                ? `${prefix}${snippetClean}`
+                : `${prefix}${s.title} — Technical encyclopedia article (${lang.toUpperCase()}). ${snippetClean}`,
+              countryPole: countryPole || lang.toUpperCase()
+            });
+          }
+          if (httpRequest === request && candidates.length > 0) {
+            if (wikiSearchCache.size > 400) wikiSearchCache.clear();
+            wikiSearchCache.set(cacheKey, candidates);
+          }
+          return candidates;
+        }
+        if (res.body && typeof res.body.dump === 'function') {
+          await res.body.dump().catch(() => {});
+        }
+      } catch (_) {}
+      if (attempt < 2) {
+        await new Promise((r) => setTimeout(r, 180));
+      }
+    }
+    return [];
+  };
+
+  if (httpRequest === request) {
+    return withWikiConcurrencyLimit(runFetch);
+  }
+  return runFetch();
 }
 
 /**
@@ -1204,8 +1624,8 @@ function selectMultiPolarTopResults({
       if (isLowSignalResult(item)) return false;
     } else if (effectiveScope === 'external') {
       // No modo 'external' (Só Externo), bloqueia 100% de resultados PT/BR mesmo se a query mencionar Brasil
-      if (isPortugueseOrBrazilianBubbleResult(item, '')) return false;
-    } else if (isPortugueseOrBrazilianBubbleResult(item, query)) {
+      if (isPortugueseOrBrazilianBubbleResult(item, '', true)) return false;
+    } else if (isPortugueseOrBrazilianBubbleResult(item, query, true)) {
       return false;
     }
     let normUrl = item.url;
@@ -1263,17 +1683,17 @@ function selectMultiPolarTopResults({
   }
 
   const filterCheckQuery = effectiveScope === 'external' ? '' : query;
-  const usQueue = usPool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, filterCheckQuery)).map((x) => withPoleBadge(x, '[🇺🇸 US]', 'US'));
-  const cnQueue = cnPool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, filterCheckQuery)).map((x) => withPoleBadge(x, '[🇨🇳 CN]', 'CN'));
-  const deQueue = dePool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, filterCheckQuery)).map((x) => withPoleBadge(x, '[🇩🇪 DE]', 'DE'));
-  const jpQueue = jpPool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, filterCheckQuery)).map((x) => withPoleBadge(x, '[🇯🇵 JP]', 'JP'));
-  const krQueue = krPool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, filterCheckQuery)).map((x) => withPoleBadge(x, '[🇰🇷 KR]', 'KR'));
-  const ruQueue = ruPool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, filterCheckQuery)).map((x) => withPoleBadge(x, '[🇷🇺 RU]', 'RU'));
+  const usQueue = usPool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, filterCheckQuery, true)).map((x) => withPoleBadge(x, '[🇺🇸 US]', 'US'));
+  const cnQueue = cnPool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, filterCheckQuery, true)).map((x) => withPoleBadge(x, '[🇨🇳 CN]', 'CN'));
+  const deQueue = dePool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, filterCheckQuery, true)).map((x) => withPoleBadge(x, '[🇩🇪 DE]', 'DE'));
+  const jpQueue = jpPool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, filterCheckQuery, true)).map((x) => withPoleBadge(x, '[🇯🇵 JP]', 'JP'));
+  const krQueue = krPool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, filterCheckQuery, true)).map((x) => withPoleBadge(x, '[🇰🇷 KR]', 'KR'));
+  const ruQueue = ruPool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, filterCheckQuery, true)).map((x) => withPoleBadge(x, '[🇷🇺 RU]', 'RU'));
   // No modo 'external' (Só Externo), desativa completamente a fila BR
   const brQueue = effectiveScope === 'external'
     ? []
     : brPool.filter((x) => !isLowSignalResult(x)).map((x) => withPoleBadge(x, '[🇧🇷 BR]', 'BR'));
-  const glQueue = globalPool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, filterCheckQuery)).map((x) => withPoleBadge(x, '[🌍 GLOBAL]', 'GLOBAL'));
+  const glQueue = globalPool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, filterCheckQuery, true)).map((x) => withPoleBadge(x, '[🌍 GLOBAL]', 'GLOBAL'));
 
   // Intercala em round-robin estrito pelos 7 grandes polos:
   // - 'global':   🇺🇸 US -> 🇨🇳 CN -> 🇩🇪 DE -> 🇯🇵 JP -> 🇰🇷 KR -> 🇷🇺 RU -> 🇧🇷 BR
@@ -1324,8 +1744,97 @@ function selectMultiPolarTopResults({
   return finalResults.slice(0, totalCount);
 }
 
+const queryPoleTranslationCache = new Map();
+
 /**
- * Executa a Federação Geopolítica Multi-Polo em paralelo respeitando o `searchScope`:
+ * Traduz dinamicamente uma consulta para os idiomas dos polos (`en`, `zh-CN`, `de`, `ja`, `ko`, `ru`)
+ * quando ela não bateu em um dicionário de domínio pré-mapeado, garantindo que pesquisas arbitrárias
+ * (política, economia, geografia, urbanismo, história, biologia, etc.) busquem em cada país no idioma nativo sem hardcode.
+ */
+async function enrichMultiPolarQueriesWithTranslation(poles, rawQuery, { httpRequest = request, timeoutMs = 2500 } = {}) {
+  if (httpRequest !== request) return poles;
+  const needsLiveTranslation = poles.cn === poles.enCore && !/[\u4e00-\u9fff]/.test(poles.cn);
+  if (!needsLiveTranslation) return poles;
+
+  const baseText = String(poles.br || rawQuery || poles.enCore || '').trim();
+  if (!baseText || baseText.length < 3) return poles;
+
+  const translateQuick = async (tl) => {
+    const cacheKey = `${tl}::${baseText}`;
+    if (queryPoleTranslationCache.has(cacheKey)) {
+      return queryPoleTranslationCache.get(cacheKey);
+    }
+    try {
+      const gtxUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(tl)}&dt=t&q=${encodeURIComponent(baseText)}`;
+      const res = await httpRequest(gtxUrl, {
+        method: 'GET',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/131.0.0.0 Safari/537.36',
+          'Accept': 'application/json'
+        },
+        headersTimeout: timeoutMs,
+        bodyTimeout: timeoutMs
+      });
+      if (res.statusCode === 200) {
+        const payload = await res.body.json();
+        if (Array.isArray(payload?.[0])) {
+          const joined = payload[0]
+            .map((seg) => (Array.isArray(seg) && typeof seg[0] === 'string' ? seg[0] : ''))
+            .join('')
+            .replace(/[?!.]+$/g, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+          if (joined) {
+            if (queryPoleTranslationCache.size > 300) queryPoleTranslationCache.clear();
+            queryPoleTranslationCache.set(cacheKey, joined);
+            return joined;
+          }
+        }
+      }
+    } catch (_) {}
+    return '';
+  };
+
+  const [enTr, zhTr, deTr, jaTr, koTr, ruTr] = await Promise.all([
+    translateQuick('en'),
+    translateQuick('zh-CN'),
+    translateQuick('de'),
+    translateQuick('ja'),
+    translateQuick('ko'),
+    translateQuick('ru')
+  ]);
+
+  if (enTr) {
+    poles.us = enTr;
+    poles.usWiki = enTr;
+    poles.enCore = enTr;
+    poles.academicCore = enTr;
+  }
+  if (zhTr) {
+    poles.cn = zhTr;
+    poles.cnWiki = zhTr;
+  }
+  if (deTr) {
+    poles.de = deTr;
+    poles.deWiki = deTr;
+  }
+  if (jaTr) {
+    poles.jp = jaTr;
+    poles.jpWiki = jaTr;
+  }
+  if (koTr) {
+    poles.kr = koTr;
+    poles.krWiki = koTr;
+  }
+  if (ruTr) {
+    poles.ru = ruTr;
+    poles.ruWiki = ruTr;
+  }
+  return poles;
+}
+
+/**
+ * Executa a Federação Geopolítica Multi-Polo em paralelo respeitando o `searchScope` e o domínio real da pergunta (`poles.domain`):
  * - `global`:   7 polos mundiais (🇺🇸 US + 🇨🇳 CN + 🇩🇪 DE + 🇯🇵 JP + 🇰🇷 KR + 🇷🇺 RU + 🇧🇷 BR)
  * - `external`: 6 polos internacionais (🇺🇸 US + 🇨🇳 CN + 🇩🇪 DE + 🇯🇵 JP + 🇰🇷 KR + 🇷🇺 RU, zero Brasil/PT)
  * - `brazil`:   100% Brasil / Português Técnico & Acadêmico (🇧🇷 BR: Wikipedia PT + OpenAlex BR + Bing/DDG PT-BR)
@@ -1335,11 +1844,18 @@ async function collectMultiPolarFederation(query, {
   timeoutMs = 5000,
   extraRawResults = [],
   totalCount = MULTI_POLAR_RESULTS_COUNT,
-  searchScope = 'global'
+  searchScope = 'global',
+  focusMode = 'web'
 } = {}) {
   const effectiveScope = normalizeSearchScope(searchScope);
-  const poles = buildMultiPolarQueries(query);
+  const poles = await enrichMultiPolarQueriesWithTranslation(
+    buildMultiPolarQueries(query, focusMode),
+    query,
+    { httpRequest, timeoutMs: 2500 }
+  );
   const wantsGitHub = /https?:\/\/|\.git\b|\b(github|reposit[óo]rios?|open[-\s]?source|c[óo]digo[-\s]?aberto)\b/i.test(query);
+  const isSoftwareDomain = poles.domain === 'software_cs' || wantsGitHub;
+  const isExactOrSoftware = isSoftwareDomain || poles.domain === 'exact_sciences';
 
   const interleaveArrays = (...arrays) => {
     const out = [];
@@ -1380,57 +1896,65 @@ async function collectMultiPolarFederation(query, {
 
   const [
     directCandidates,
-    // 🇺🇸 Polo Estados Unidos (OpenAlex US + HN + ArXiv + Wikipedia EN + Bing US)
+    // 🇺🇸 Polo Estados Unidos
     usOpenAlex,
     usHn,
     usArxiv,
     usWiki,
     usBing,
-    // 🇨🇳 Polo China (OpenAlex China + Wikipedia ZH + GitHub China/Global)
+    // 🇨🇳 Polo China
     cnOpenAlex,
     cnWiki,
     cnGitHub,
-    // 🇩🇪 Polo Alemanha (OpenAlex Germany + Wikipedia DE — Max Planck, Fraunhofer, TUM, DFKI)
+    // 🇩🇪 Polo Alemanha
     deOpenAlex,
     deWiki,
-    // 🇯🇵 Polo Japão (OpenAlex Japan + Wikipedia JA — RIKEN, UTokyo, KyotoU, NII)
+    // 🇯🇵 Polo Japão
     jpOpenAlex,
     jpWiki,
-    // 🇰🇷 Polo Coreia do Sul (OpenAlex South Korea + Wikipedia KO — KAIST, SNU, NAVER AI, ETRI)
+    // 🇰🇷 Polo Coreia do Sul
     krOpenAlex,
     krWiki,
-    // 🇷🇺 Polo Rússia (Habr RU + OpenAlex Russia + Wikipedia RU)
+    // 🇷🇺 Polo Rússia
     ruHabr,
     ruOpenAlex,
     ruWiki,
-    // 🇧🇷 Polo Brasil / Português Técnico & Acadêmico (Wikipedia PT + OpenAlex Brasil — apenas quando includeBrPole=true)
+    // 🇧🇷 Polo Brasil / Português
     brWiki,
     brOpenAlex
   ] = await Promise.all([
     resolveDirectUrlAndGitCandidates(query, { httpRequest, timeoutMs: 4000 }),
     // US Pole
     searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 4500, count: 3, countryCode: 'US', countryPole: 'US', countryBadge: '[🇺🇸 US]' }),
-    searchHackerNewsGlobal(poles.enCore, { httpRequest, timeoutMs: 4000, count: 2 }),
-    searchArxivGlobal(poles.academicCore, { httpRequest, timeoutMs: 4500, count: 2 }),
-    searchWikipediaByLang(poles.enCore, 'en', { httpRequest, timeoutMs: 4000, count: 2, countryPole: 'US', countryBadge: '[🇺🇸 US]' }),
+    isSoftwareDomain
+      ? searchHackerNewsGlobal(poles.enCore, { httpRequest, timeoutMs: 4000, count: 2 })
+      : Promise.resolve([]),
+    isExactOrSoftware
+      ? searchArxivGlobal(poles.academicCore, { httpRequest, timeoutMs: 4500, count: 2 })
+      : Promise.resolve([]),
+    searchWikipediaByLang(poles.usWiki || poles.enCore, 'en', { httpRequest, timeoutMs: 4000, count: 3, countryPole: 'US', countryBadge: '[🇺🇸 US]' }),
     searchBingHtml(poles.us, { httpRequest, timeoutMs: 4500, count: 3, searchScope: 'external' }),
     // China Pole
     searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 4500, count: 3, countryCode: 'CN', countryPole: 'CN', countryBadge: '[🇨🇳 CN]' }),
-    searchWikipediaByLang(poles.cnWiki, 'zh', { httpRequest, timeoutMs: 4000, count: 2, countryPole: 'CN', countryBadge: '[🇨🇳 CN]' }),
-    searchGitHubGlobal(poles.enCore, { httpRequest, timeoutMs: 4000, count: wantsGitHub ? 5 : 2 }),
+    searchWikipediaByLang(poles.cnWiki, 'zh', { httpRequest, timeoutMs: 4000, count: 3, countryPole: 'CN', countryBadge: '[🇨🇳 CN]' }),
+    isSoftwareDomain
+      ? searchGitHubGlobal(poles.enCore, { httpRequest, timeoutMs: 4000, count: wantsGitHub ? 5 : 2 })
+      : Promise.resolve([]),
     // Germany Pole
     searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 4500, count: 3, countryCode: 'DE', countryPole: 'DE', countryBadge: '[🇩🇪 DE]' }),
-    searchWikipediaByLang(poles.deWiki, 'de', { httpRequest, timeoutMs: 4000, count: 2, countryPole: 'DE', countryBadge: '[🇩🇪 DE]' }),
+    searchWikipediaByLang(poles.deWiki, 'de', { httpRequest, timeoutMs: 4000, count: 3, countryPole: 'DE', countryBadge: '[🇩🇪 DE]' }),
     // Japan Pole
     searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 4500, count: 3, countryCode: 'JP', countryPole: 'JP', countryBadge: '[🇯🇵 JP]' }),
-    searchWikipediaByLang(poles.jpWiki, 'ja', { httpRequest, timeoutMs: 4000, count: 2, countryPole: 'JP', countryBadge: '[🇯🇵 JP]' }),
+    searchWikipediaByLang(poles.jpWiki, 'ja', { httpRequest, timeoutMs: 4000, count: 3, countryPole: 'JP', countryBadge: '[🇯🇵 JP]' }),
     // South Korea Pole
     searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 4500, count: 3, countryCode: 'KR', countryPole: 'KR', countryBadge: '[🇰🇷 KR]' }),
-    searchWikipediaByLang(poles.krWiki, 'ko', { httpRequest, timeoutMs: 4000, count: 2, countryPole: 'KR', countryBadge: '[🇰🇷 KR]' }),
+    searchWikipediaByLang(poles.krWiki, 'ko', { httpRequest, timeoutMs: 4000, count: 3, countryPole: 'KR', countryBadge: '[🇰🇷 KR]' }),
     // Russia Pole
-    searchHabrRussia(poles.ru, { httpRequest, timeoutMs: 4500, count: 3, fallbackQuery: poles.enCore }),
+    isSoftwareDomain
+      ? searchHabrRussia(poles.ru, { httpRequest, timeoutMs: 4500, count: 3, fallbackQuery: poles.enCore })
+      : Promise.resolve([]),
     searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 4500, count: 3, countryCode: 'RU', countryPole: 'RU', countryBadge: '[🇷🇺 RU]' }),
-    searchWikipediaByLang(poles.ruWiki, 'ru', { httpRequest, timeoutMs: 4000, count: 2, countryPole: 'RU', countryBadge: '[🇷🇺 RU]' }),
+    searchWikipediaByLang(poles.ruWiki, 'ru', { httpRequest, timeoutMs: 4000, count: 3, countryPole: 'RU', countryBadge: '[🇷🇺 RU]' }),
     // Brazil / Portuguese Pole
     includeBrPole
       ? searchWikipediaByLang(poles.brWiki, 'pt', { httpRequest, timeoutMs: 4000, count: 3, countryPole: 'BR', countryBadge: '[🇧🇷 BR]' })
@@ -1440,16 +1964,16 @@ async function collectMultiPolarFederation(query, {
       : Promise.resolve([])
   ]);
 
-  const cleanExtra = (extraRawResults || []).filter((item) => !isPortugueseOrBrazilianBubbleResult(item, query));
+  const cleanExtra = (extraRawResults || []).filter((item) => !isPortugueseOrBrazilianBubbleResult(item, query, true));
   const brExtra = includeBrPole
-    ? (extraRawResults || []).filter((item) => isPortugueseOrBrazilianBubbleResult(item, query) && !isLowSignalResult(item))
+    ? [...(extraRawResults || []), ...(usBing || [])].filter((item) => isPortugueseOrBrazilianBubbleResult(item, query, true) && !isLowSignalResult(item))
     : [];
 
-  // Intercala dentro de cada polo (Web/Enciclopédia + Paper Acadêmico do País + Engenharia/Código)
+  // Intercala dentro de cada polo respeitando o domínio (Enciclopédia + Paper Acadêmico do País + Web/Engenharia)
   const usPool = interleaveArrays(
-    [...cleanExtra, ...usBing],
+    usWiki,
     usOpenAlex,
-    [...usHn, ...usArxiv, ...usWiki]
+    [...cleanExtra, ...usBing, ...usHn, ...usArxiv]
   ).slice(0, 6);
 
   const cnPool = interleaveArrays(
@@ -1459,24 +1983,24 @@ async function collectMultiPolarFederation(query, {
   ).slice(0, 5);
 
   const dePool = interleaveArrays(
-    deOpenAlex,
-    deWiki
+    deWiki,
+    deOpenAlex
   ).slice(0, 5);
 
   const jpPool = interleaveArrays(
-    jpOpenAlex,
-    jpWiki
+    jpWiki,
+    jpOpenAlex
   ).slice(0, 5);
 
   const krPool = interleaveArrays(
-    krOpenAlex,
-    krWiki
+    krWiki,
+    krOpenAlex
   ).slice(0, 5);
 
   const ruPool = interleaveArrays(
-    ruHabr,
+    isSoftwareDomain ? ruHabr : ruWiki,
     ruOpenAlex,
-    ruWiki
+    isSoftwareDomain ? ruWiki : []
   ).slice(0, 5);
 
   const brPool = includeBrPole
@@ -1828,7 +2352,11 @@ async function searchBingHtml(query, { httpRequest = request, timeoutMs = 8000, 
       // Anti-Honeypot Filter: descarta páginas aleatórias injetadas pelo anti-bot do Bing (ex.: "Santa Catarina", "Summer Place")
       if (isRealNetworkCall && subjectTokens.length > 0) {
         const hay = `${title} ${description}`.toLowerCase();
-        const matchesSubject = subjectTokens.some((tok) => hay.includes(tok));
+        const matchesSubject = subjectTokens.some((tok) => {
+          if (tok.length >= 4) return hay.includes(tok);
+          const escaped = tok.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          return new RegExp(`\\b${escaped}\\b`, 'i').test(hay);
+        });
         if (!matchesSubject) continue;
       }
 
@@ -2154,6 +2682,8 @@ module.exports = {
   SEARCH_LANGUAGES,
   normalizeSearchLang,
   localizeSourceHeadlines,
+  classifyQueryDomain,
+  enrichMultiPolarQueriesWithTranslation,
   LOW_SIGNAL_DOMAINS,
   HIGH_SIGNAL_DOMAINS,
   isExplicitBrazilQuery,

@@ -13,6 +13,7 @@ const {
   searchKeylessWeb,
   buildContextualSearchQuery,
   toGlobalResearchQuery,
+  classifyQueryDomain,
   buildMultiPolarQueries,
   isExplicitBrazilQuery,
   isPortugueseOrBrazilianBubbleResult,
@@ -1316,6 +1317,92 @@ test('16. Expansão Global 7 Polos (US·CN·DE·JP·KR·RU·BR), Seletor de Idio
   assert.match(turnCardHtml, /turn-lang-badge/);
   assert.match(turnCardHtml, /Headlines &amp; Síntese: PT-BR/);
 });
+
+test('17. Zero CS-Hardcode & Classificação Multidisciplinar em 8 Domínios (Política, Economia, Desenvolvimento, Arquitetura, Urbanismo, Geografia, Física Nuclear, Computação Quântica)', () => {
+  // 1. Política ("como o lula é visto no mundo") -> general_research, zero termos de CS/Software
+  const polQ = 'como o lula é visto no mundo';
+  assert.equal(classifyQueryDomain(polQ), 'general_research');
+  const polPoles = buildMultiPolarQueries(polQ);
+  assert.equal(polPoles.domain, 'general_research');
+  assert.match(polPoles.us, /Luiz Inácio Lula da Silva.*foreign policy/i);
+  assert.match(polPoles.cn, /卢拉·达席尔瓦.*巴西外交/);
+  assert.match(polPoles.de, /Außenpolitik Brasiliens/);
+  assert.match(polPoles.jp, /ブラジルの国際関係/);
+  assert.match(polPoles.kr, /브라질의 대외 관계/);
+  assert.match(polPoles.ru, /Внешняя политика Бразилии/);
+  for (const val of [polPoles.us, polPoles.cn, polPoles.de, polPoles.jp, polPoles.kr, polPoles.ru]) {
+    assert.doesNotMatch(val, /Informatik|コンピュータ科学|컴퓨터 과학|基准评测|бенчмарк|software/i);
+  }
+
+  // Portais brasileiros (brasil247.com) são bloqueados dos polos internacionais mesmo quando a pergunta menciona Lula/Brasil
+  assert.equal(
+    isPortugueseOrBrazilianBubbleResult(
+      { url: 'https://www.brasil247.com/mundo/artigo-lula', title: 'Lula no mundo' },
+      polQ,
+      true
+    ),
+    true
+  );
+
+  // 2. Economia -> general_research
+  const ecoQ = 'política monetária taxa de juros e controle de inflação nos bancos centrais';
+  assert.equal(classifyQueryDomain(ecoQ), 'general_research');
+  const ecoPoles = buildMultiPolarQueries(ecoQ);
+  assert.match(ecoPoles.us, /monetary policy.*central bank/i);
+  assert.match(ecoPoles.de, /Geldpolitik.*Zentralbank/);
+  assert.match(ecoPoles.jp, /金融政策.*中央銀行/);
+
+  // 3. Desenvolvimento -> software_cs
+  const devQ = 'arquitetura de microsserviços event-driven com Kafka e Rust';
+  assert.equal(classifyQueryDomain(devQ), 'software_cs');
+  const devPoles = buildMultiPolarQueries(devQ);
+  assert.equal(devPoles.domain, 'software_cs');
+  assert.match(devPoles.cn, /微服务架构/);
+  assert.match(devPoles.ru, /микросервисная архитектура/);
+
+  // 4. Arquitetura Civil -> general_research (não confunde "arquitetura brutalista" com arquitetura de software)
+  const archQ = 'arquitetura brutalista e bioclimática contemporânea no mundo';
+  assert.equal(classifyQueryDomain(archQ), 'general_research');
+  const archPoles = buildMultiPolarQueries(archQ);
+  assert.equal(archPoles.domain, 'general_research');
+  assert.match(archPoles.us, /brutalist architecture bioclimatic/i);
+  assert.match(archPoles.de, /Brutalismus.*Bioklimatische Architektur/);
+  assert.doesNotMatch(archPoles.de, /Informatik|Software/i);
+
+  // 5. Urbanismo -> general_research
+  const urbQ = 'planejamento urbano cidades compactas e mobilidade sustentável';
+  assert.equal(classifyQueryDomain(urbQ), 'general_research');
+  const urbPoles = buildMultiPolarQueries(urbQ);
+  assert.match(urbPoles.us, /urban planning compact cities/i);
+  assert.match(urbPoles.cn, /城市规划.*紧凑城市/);
+  assert.match(urbPoles.jp, /都市計画.*コンパクトシティ/);
+
+  // 6. Geografia -> general_research
+  const geoQ = 'geopolítica do Ártico degelo das calotas polares e rotas marítimas';
+  assert.equal(classifyQueryDomain(geoQ), 'general_research');
+  const geoPoles = buildMultiPolarQueries(geoQ);
+  assert.match(geoPoles.us, /Arctic geopolitics.*Northern Sea Route/i);
+  assert.match(geoPoles.ru, /Северный морской путь.*Арктика/);
+
+  // 7. Física Nuclear -> exact_sciences
+  const nucQ = 'fusão nuclear por confinamento magnético tokamak ITER e reatores SMR';
+  assert.equal(classifyQueryDomain(nucQ), 'exact_sciences');
+  const nucPoles = buildMultiPolarQueries(nucQ);
+  assert.equal(nucPoles.domain, 'exact_sciences');
+  assert.match(nucPoles.us, /nuclear fusion magnetic confinement tokamak ITER/i);
+  assert.match(nucPoles.cn, /托卡马克.*核聚变/);
+  assert.match(nucPoles.de, /Kernfusion.*Tokamak/);
+
+  // 8. Computação Quântica -> exact_sciences
+  const qntQ = 'correção de erros quânticos códigos de superfície e qubits supercondutores';
+  assert.equal(classifyQueryDomain(qntQ), 'exact_sciences');
+  const qntPoles = buildMultiPolarQueries(qntQ);
+  assert.equal(qntPoles.domain, 'exact_sciences');
+  assert.match(qntPoles.us, /quantum error correction surface codes superconducting qubits/i);
+  assert.match(qntPoles.cn, /量子纠错.*超导量子比特/);
+  assert.match(qntPoles.jp, /量子誤り訂正.*超伝導量子ビット/);
+});
+
 
 
 

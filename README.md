@@ -14,21 +14,24 @@ O **DeepEvil** é um mecanismo de pesquisa técnica, científica e de engenharia
 Combinando uma federação global de busca sem trava regional (**DuckDuckGo Worldwide**, **Wikipedia EN**, **OpenAlex 250M+ papers**, **ArXiv**, **GitHub API**, **HackerNews** e **SearXNG**) com o modelo local **`eriktonon/granite4.2-uncensored`** (janela de **32.768 tokens** no **Ollama**), o DeepEvil lê o conteúdo real das páginas via `@mozilla/readability` e gera respostas técnicas densas, em tempo real via **Server-Sent Events (SSE)**, com citações verificadas `[1][2]` e cartões de preview interativos.
 
 ### Destaques Principais
-- **Pesquisa Global Sem Limitação Regional (Worldwide Research)**: Converte consultas técnicas em português/espanhol/inglês para buscar diretamente na literatura internacional primária (ArXiv, IEEE, OpenAlex, GitHub, RFCs, Wikipedia EN), descartando portais rasos.
+- **Federação Global em 7 Polos Mundiais (`🇺🇸 US · 🇨🇳 CN · 🇩🇪 DE · 🇯🇵 JP · 🇰🇷 KR · 🇷🇺 RU · 🇧🇷 BR`)**: Rompe a bolha geográfica buscando simultaneamente nos principais centros tecnológicos e acadêmicos do mundo — **EUA** (OpenAlex US, ArXiv, HackerNews, Wikipedia EN), **China** (OpenAlex CN, Wikipedia ZH, GitHub Global), **Alemanha** (Max Planck, Fraunhofer, TUM, DFKI, OpenAlex DE, Wikipedia DE), **Japão** (RIKEN, UTokyo, NII, OpenAlex JP, Wikipedia JA), **Coreia do Sul** (KAIST, SNU, ETRI, OpenAlex KR, Wikipedia KO), **Rússia** (Habr Engineering, OpenAlex RU, Wikipedia RU) e **Brasil** (USP, UNICAMP, PUC-Rio, OpenAlex BR, Wikipedia PT).
+- **Tradução Automática de Headlines (`localizeSourceHeadlines`) & Seletor de Idioma (`searchLang`)**: Títulos de artigos e papers internacionais (em mandarim, japonês, coreano, alemão, russo ou inglês) têm o assunto traduzido automaticamente para o idioma selecionado na busca (`Português`, `English`, `Español`, `Deutsch`, `日本語`, `한국어`, `中文`, `Русский`), preservando a flag do país (`[🇩🇪 DE]`, `[🇯🇵 JP]`, `[🇰🇷 KR]`) e o nome original de repositórios (`owner/repo`).
+- **2-Tier Obsidian Command Deck UI (`/taste-design-direction`)**: Cápsula de comando em 2 andares com 100% da largura dedicada ao input de pesquisa no Tier 1 e seletores táticos independentes no Tier 2 (`ESCOPO`, `IDIOMA`, `FOCO`, `LLM`).
+- **Filtro de Escopo Geopolítico (`searchScope`)**: Alterne entre `Global · 7 Polos (US·CN·DE·JP·KR·RU·BR)`, `Só Externo (US·CN·DE·JP·KR·RU)` ou `Só Brasil (PT-BR)`.
 - **Extração Direta de Repositórios GitHub**: Detecta URLs ou pedidos de código open-source, consulta a API do GitHub ordenada por estrelas (`sort=stars`) e extrai o `README.md` completo via `raw.githubusercontent.com`.
-- **5 Modos de Foco (`Focus Modes`)**: `Web`, `SecOps / CVE`, `Code / Docs`, `Academic` e `Híbrido (Local + Web)`.
+- **5 Modos de Foco (`Focus Modes`)**: `Web Global`, `SecOps / CVE`, `Code / Docs`, `Academic` e `Híbrido (Local + Web)`.
 - **Motor LLM Local de 32K (`eriktonon/granite4.2-uncensored`)**: Baseado no IBM Granite 4.2 8B com *Orthogonal Refusal Abliteration* + *SecOps LoRA*, configurado com `num_ctx=32768`, `repeat_penalty=1.12` e isolamento estrito de citações entre turnos.
-- **Seletor Multi-LLM Ao Vivo**: Troque de modelo a qualquer momento direto na interface (qualquer modelo instalado no seu Ollama local, ou opcionalmente Claude / OpenAI), além de botão **Regerar** (`0ms` de nova busca web) e **Traduzir** instantâneo (`PT`, `EN`, `ES`, `FR`, `DE`).
+- **Seletor Multi-LLM Ao Vivo**: Troque de modelo a qualquer momento direto na interface (qualquer modelo instalado no seu Ollama local, ou opcionalmente Claude / OpenAI), além de botão **Regerar** (`0ms` de nova busca web) e **Traduzir** instantâneo (`PT`, `EN`, `ES`, `DE`, `JA`, `KO`, `ZH`, `RU`, `FR`).
 
 ---
 
 ## Interface & Demonstração Visual
 
-### 1. Tela Inicial — Focus Modes & Seletor Ao Vivo de Modelos Ollama
+### 1. Tela Inicial — 2-Tier Obsidian Command Deck (`ESCOPO`, `IDIOMA`, `FOCO`, `LLM`)
 ![DeepEvil Home Screen](./public/screenshots/deepevil-home.png)
 
-### 2. Pesquisa Global Multi-Turn — Arquiteturas P2P (IEEE, ArXiv, ProbeLab & GitHub)
-![DeepEvil P2P Research](./public/screenshots/deepevil-p2p-research.png)
+### 2. Pesquisa Global 7 Polos (🇺🇸 US · 🇨🇳 CN · 🇩🇪 DE · 🇯🇵 JP · 🇰🇷 KR · 🇷🇺 RU · 🇧🇷 BR) com Headlines Traduzidas
+![DeepEvil 7-Pole Global Research](./public/screenshots/deepevil-p2p-research.png)
 
 ### 3. Descoberta Direta de Repositórios Open-Source no GitHub (Modelagem 3D & CAD)
 ![DeepEvil GitHub Repositories Discovery](./public/screenshots/deepevil-3d-github.png)
