@@ -220,7 +220,7 @@ function classifyQueryDomain(rawQuery = '', focusMode = 'web') {
   // 1. Arquitetura Civil, Urbanismo, Geografia, Política e Economia têm precedência sobre a palavra ambígua "arquitetura" ou "desenvolvimento"
   const isCivilArchUrbanGeoPolEcon = /\b(urbanismo|planejamento\s+urbano|mobilidade\s+urbana|cidades?\s+compactas?|gentrifica[çc][ãa]o|zoneamento|plano\s+diretor|saneamento|arquitetura\s+(?:brutalista|bioclim[áa]tica|moderna|modernista|contempor[âa]nea|sustent[áa]vel|civil|urbana|paisag[íi]stica|g[óo]tica|barroca|colonial|de\s+interiores|hospitalar|escolar)|brutalismo|edif[íi]cios?|niemeyer|le\s+corbusier|bauhaus|zaha\s+hadid|frank\s+lloyd|geografia|relevo|hidrografia|bacia\s+hidrogr[áa]fica|cartografia|calotas?\s+polares?|degelo|[áa]rtico|ant[áa]rtida|geopol[íi]tica|diplomacia|pol[íi]tica\s+externa|pol[íi]tica\s+monet[áa]ria|pol[íi]tica\s+fiscal|elei[çc][õo]es|democracia|presid[êe]ncia|presidente|lula|bolsonaro|itamaraty|banco\s+central|taxa\s+de\s+juros|infla[çc][ãa]o|macroeconomia|pib|d[íi]vida\s+p[úu]blica|com[ée]rcio\s+internacional|desenvolvimento\s+(?:econ[ôo]mico|sustent[áa]vel|urbano|humano|social|regional))\b/i.test(q);
 
-  const hasExplicitSoftwareOrAi = /\b(software|programa[çc][ãa]o|coding|c[óo]digo[\s-]fonte|open[-\s]?source|github|\.git\b|linux|kernel|docker|kubernetes|microsservi[çc]os|microservices|api|rest|graphql|grpc|rust|python|javascript|typescript|golang|java|c\+\+|sql|postgres\w*|sqlite|redis|kafka|banco\s+de\s+dados|database|compilador|compiler|llm|llms|gpt|claude|qwen|deepseek|granite|ollama|machine\s+learning|aprendizado\s+de\s+m[áa]quina|deep\s+learning|rede\s+neural|intelig[êe]ncia\s+artificial|artificial\s+intelligence|\bia\b|cybersecurity|ciberseguran[çc]a|exploit|cve|vulnerabilidade|malware|ransomware|rootkit|pentest|engenharia\s+reversa|reverse\s+engineering|kademlia|quic|p2p|webrtc|websocket|ebpf|xdp|ftrace|hnsw|modelagem\s+3d|cad\b|blender|freecad|openscad|palantir|foundry)\b/i.test(q);
+  const hasExplicitSoftwareOrAi = /\b(software|programa[çc][ãa]o|coding|c[óo]digo[\s-]fonte|open[-\s]?source|github|\.git\b|linux|kernel|microkernel|sel4|sistema(?:s)?\s+operacional(?:is)?|operating\s+systems?|verifica[çc][ãa]o\s+formal|formal\s+verification|docker|kubernetes|microsservi[çc]os|microservices|api|rest|graphql|grpc|rust|python|javascript|typescript|golang|java|c\+\+|sql|postgres\w*|sqlite|redis|kafka|banco\s+de\s+dados|database|compilador|compiler|llm|llms|gpt|claude|qwen|deepseek|granite|ollama|machine\s+learning|aprendizado\s+de\s+m[áa]quina|deep\s+learning|rede\s+neural|intelig[êe]ncia\s+artificial|artificial\s+intelligence|\bia\b|cybersecurity|ciberseguran[çc]a|exploit|cve|vulnerabilidade|malware|ransomware|rootkit|pentest|engenharia\s+reversa|reverse\s+engineering|kademlia|quic|p2p|webrtc|websocket|ebpf|xdp|ftrace|hnsw|modelagem\s+3d|cad\b|blender|freecad|openscad|palantir|foundry)\b/i.test(q);
 
   if (isCivilArchUrbanGeoPolEcon && !hasExplicitSoftwareOrAi) {
     return 'general_research';
@@ -482,18 +482,6 @@ function buildMultiPolarQueries(rawQuery, focusMode = 'web') {
     ruWikiCustom = 'Лула_да_Силва,_Луис_Инасиу OR Внешняя_политика_Бразилии';
     brQuery = 'Luiz Inácio Lula da Silva política externa brasileira percepção internacional diplomacia';
     brWiki = 'Luiz Inácio Lula da Silva OR Política externa do governo Lula';
-  } else if (/\b(pol[íi]tica\s+externa|diplomacia|geopol[íi]tica|rela[çc][õo]es\s+internacionais|foreign\s+policy|geopolitics|elei[çc][õo]es|democracia)\b/i.test(lower) && !/\b([áa]rtico|arctic|calotas?\s+polares?)\b/i.test(lower)) {
-    academicCore = `${enBase} international relations political science foreign policy`.trim();
-    cnTerms.push('国际关系', '地缘政治', '外交政策');
-    deTerms.push('Internationale Beziehungen', 'Geopolitik', 'Außenpolitik');
-    jpTerms.push('国際関係', '地政学', '外交政策');
-    krTerms.push('국제 관계', '지정학', '외교 정책');
-    ruTerms.push('международные отношения', 'геополитика', 'внешняя политика');
-    cnWikiCustom = '国际关系 OR 地缘政治学';
-    deWikiCustom = 'Internationale_Beziehungen OR Geopolitik';
-    jpWikiCustom = '国際関係論 OR 地政学';
-    krWikiCustom = '국제관계학 OR 지정학';
-    ruWikiCustom = 'Международные_отношения OR Геополитика';
   }
 
   // 2. Economia, Política Monetária & Macroeconomia
@@ -1543,50 +1531,99 @@ async function searchWikipediaByLang(query, lang = 'en', {
     return wikiSearchCache.get(cacheKey);
   }
 
-  const runFetch = async () => {
-    const apiUrl = `https://${lang}.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(cleanQuery)}&utf8=&format=json&srlimit=${count}`;
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      try {
-        const res = await httpRequest(apiUrl, {
-          method: 'GET',
-          headers: {
-            'User-Agent': 'DeepEvil/1.0 (https://github.com/eriktonon/deep-evil; mailto:research@deepevil.org)',
-            'Accept': 'application/json',
-            'Accept-Language': GLOBAL_ACCEPT_LANGUAGE
-          },
-          headersTimeout: timeoutMs,
-          bodyTimeout: timeoutMs
-        });
-        if (res.statusCode === 200) {
-          const data = await res.body.json();
-          const searchItems = Array.isArray(data?.query?.search) ? data.query.search : [];
-          const prefix = countryBadge ? `${countryBadge} ` : '';
-          const candidates = [];
+  const condenseWikiQuery = (q) => {
+    const stripped = String(q || '')
+      .replace(/([A-Za-z0-9]+)-([A-Za-z\u00C0-\u024F]+)/g, '$1 $2')
+      .replace(/([A-Za-z0-9]+)([\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7af])/g, '$1 $2')
+      .replace(/([\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7af])([A-Za-z0-9]+)/g, '$1 $2')
+      .replace(/における|について|に関する|中的|关于|에서의|에 대한|架构|アーキテクチャ|아키텍처/g, ' ')
+      .replace(/[、。，・]/g, ' ')
+      .replace(/\b(and|or|in|of|the|for|with|on|to|und|oder|in|der|die|das|den|dem|des|von|für|mit|и|или|в|на|для|с|по|о|об|e|ou|de|da|do|das|dos|em|no|na|nos|nas|para|por|com|arquitetura|architecture|architektur|архитектура|hist[óo]ria|history|geschichte|история|cadeias?|globais?|global)\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const parts = stripped.split(/\s+/).filter(Boolean);
+    if (parts.length > 3) {
+      return parts.slice(0, 3).join(' ');
+    }
+    if (parts.length <= 2 && /[\u3040-\u30ff\u4e00-\u9fff]/.test(stripped) && stripped.length > 5) {
+      const subParts = stripped
+        .replace(/操作系统/g, ' 操作系统 ')
+        .replace(/微内核/g, ' 微内核 ')
+        .replace(/形式化验证/g, ' 形式化验证 ')
+        .split(/[\sとやのはがをにでへも和与及在的]+/)
+        .filter((s) => s.length >= 2);
+      if (subParts.length > 0) return subParts.slice(0, 2).join(' ');
+    }
+    return stripped;
+  };
 
-          for (const s of searchItems) {
-            if (!s?.title) continue;
-            const snippetClean = String(s.snippet || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
-            candidates.push({
-              url: `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(String(s.title).replace(/ /g, '_'))}`,
-              title: `${prefix}${s.title} — Wikipedia (${lang.toUpperCase()})`,
-              description: snippetClean.length >= 50
-                ? `${prefix}${snippetClean}`
-                : `${prefix}${s.title} — Technical encyclopedia article (${lang.toUpperCase()}). ${snippetClean}`,
-              countryPole: countryPole || lang.toUpperCase()
-            });
+  const runFetch = async () => {
+    const queryVariants = [cleanQuery];
+    const condensed = condenseWikiQuery(cleanQuery);
+    if (condensed && condensed !== cleanQuery) {
+      queryVariants.push(condensed);
+    }
+    const tokens = condensed.split(/\s+/).filter((t) => t.length >= 2);
+    const twoWord = tokens.slice(0, 2).join(' ');
+    if (twoWord && !queryVariants.includes(twoWord)) {
+      queryVariants.push(twoWord);
+    }
+    // Se ainda não encontrar com 2 palavras combinadas, tenta a palavra-chave nativa mais específica isolada
+    const nativeTokens = tokens.filter((t) => !/^[a-z0-9]+$/i.test(t) || t.length >= 4);
+    for (const singleTok of [...nativeTokens, ...tokens].slice(0, 3)) {
+      if (singleTok.length >= 2 && !queryVariants.includes(singleTok)) {
+        queryVariants.push(singleTok);
+      }
+    }
+
+    for (const qVariant of queryVariants) {
+      const apiUrl = `https://${lang}.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(qVariant)}&utf8=&format=json&srlimit=${count}`;
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          const res = await httpRequest(apiUrl, {
+            method: 'GET',
+            headers: {
+              'User-Agent': 'DeepEvil/1.0 (https://github.com/eriktonon/deep-evil; mailto:research@deepevil.org)',
+              'Accept': 'application/json',
+              'Accept-Language': GLOBAL_ACCEPT_LANGUAGE
+            },
+            headersTimeout: timeoutMs,
+            bodyTimeout: timeoutMs
+          });
+          if (res.statusCode === 200) {
+            const data = await res.body.json();
+            const searchItems = Array.isArray(data?.query?.search) ? data.query.search : [];
+            const prefix = countryBadge ? `${countryBadge} ` : '';
+            const candidates = [];
+
+            for (const s of searchItems) {
+              if (!s?.title) continue;
+              const snippetClean = String(s.snippet || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+              candidates.push({
+                url: `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(String(s.title).replace(/ /g, '_'))}`,
+                title: `${prefix}${s.title} — Wikipedia (${lang.toUpperCase()})`,
+                description: snippetClean.length >= 50
+                  ? `${prefix}${snippetClean}`
+                  : `${prefix}${s.title} — Technical encyclopedia article (${lang.toUpperCase()}). ${snippetClean}`,
+                countryPole: countryPole || lang.toUpperCase()
+              });
+            }
+            if (candidates.length > 0) {
+              if (httpRequest === request) {
+                if (wikiSearchCache.size > 400) wikiSearchCache.clear();
+                wikiSearchCache.set(cacheKey, candidates);
+              }
+              return candidates;
+            }
+            break; // Status 200 mas 0 resultados: tenta a variante condensada mais curta
           }
-          if (httpRequest === request && candidates.length > 0) {
-            if (wikiSearchCache.size > 400) wikiSearchCache.clear();
-            wikiSearchCache.set(cacheKey, candidates);
+          if (res.body && typeof res.body.dump === 'function') {
+            await res.body.dump().catch(() => {});
           }
-          return candidates;
+        } catch (_) {}
+        if (attempt < 2) {
+          await new Promise((r) => setTimeout(r, 180));
         }
-        if (res.body && typeof res.body.dump === 'function') {
-          await res.body.dump().catch(() => {});
-        }
-      } catch (_) {}
-      if (attempt < 2) {
-        await new Promise((r) => setTimeout(r, 180));
       }
     }
     return [];

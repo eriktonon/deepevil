@@ -120,7 +120,8 @@ function renderAnswerMarkdownWithFootnotes(markdownText, turnId, sources = []) {
 
   const sanitizedMd = sanitizeCitations(markdownText || '', validSourcesMap.size);
   if (!sanitizedMd.trim()) {
-    return '<p class="answer-placeholder">[SYS::STREAM] Sintetizando pacotes de leitura verificada…</p>';
+    const topStripEmpty = renderTopSourcesStrip(turnId, sources);
+    return `${topStripEmpty}\n<p class="answer-placeholder">[SYS::STREAM] Sintetizando pacotes de leitura verificada…</p>`.trim();
   }
 
   // Separa blocos de código cercados (```) para não processar citações dentro de código literal

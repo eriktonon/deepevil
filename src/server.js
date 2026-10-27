@@ -758,10 +758,14 @@ function createApp(options = {}) {
         });
       }
 
-      // Envia imediatamente a lista completa de fontes obtidas com sucesso para o rodapé da resposta
+      // Envia imediatamente a lista completa de fontes obtidas com sucesso para o rodapé e faixa superior da resposta
       broadcastSse(
         'sources',
         renderTurnSourcesFootnotes(turn.id, validSources, { status: 'streaming', question: turn.question })
+      );
+      broadcastSse(
+        'answer',
+        renderAnswerMarkdownWithFootnotes('', turn.id, validSources)
       );
 
       const llmConfig = resolveLlmConfig(env, turn.model);
