@@ -95,6 +95,8 @@ const HIGH_SIGNAL_DOMAINS = [
   'habr.com',
   'mera.a-ai.ru',
   'cyberleninka.ru',
+  'yandex.ru',
+  'yandex.com',
   'opencompass.org.cn',
   'modelscope.cn',
   'zhihu.com',
@@ -1509,6 +1511,186 @@ async function searchHabrRussia(query, {
 }
 
 /**
+ * Motor de busca Yandex + Runet (Polo 🇷🇺 Rússia) com cascata resiliente em 3 camadas:
+ *  - Tier 1: Yandex Cloud Search XML API oficial (`YANDEX_API_KEY` + `YANDEX_FOLDER_ID`)
+ *  - Tier 2: Yandex Web Search HTML (`https://yandex.com/search/?text=...&lr=213`) com guarda anti-SmartCaptcha (`302 /showcaptcha`)
+ *  - Tier 3: CyberLeninka Runet Open Science JSON API (`POST https://cyberleninka.ru/api/search`, 4M+ artigos científicos russos)
+ */
+async function searchYandexRussia(query, {
+  httpRequest = request,
+  timeoutMs = 4500,
+  count = 3,
+  fallbackQuery = '',
+  env = process.env
+} = {}) {
+  const cleanQuery = String(query || fallbackQuery || '')
+    .replace(/\s+OR\s+.+$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleanQuery) return [];
+
+  const yandexApiKey = String(env?.YANDEX_API_KEY || '').trim();
+  const yandexFolderId = String(env?.YANDEX_FOLDER_ID || '').trim();
+
+  // Tier 1: Yandex Cloud Search XML API (quando autenticado)
+  if (yandexApiKey && yandexFolderId) {
+    try {
+      const xmlUrl = `https://yandex.com/search/xml?folderid=${encodeURIComponent(yandexFolderId)}&apikey=${encodeURIComponent(yandexApiKey)}&query=${encodeURIComponent(cleanQuery)}&l10n=en&filter=none`;
+      const xmlRes = await httpRequest(xmlUrl, {
+        method: 'GET',
+        headers: {
+          'User-Agent': 'DeepEvil-Homelab-Search/2.0',
+          'Accept': 'application/xml, text/xml'
+        },
+        headersTimeout: timeoutMs,
+        bodyTimeout: timeoutMs
+      });
+      if (xmlRes.statusCode === 200) {
+        const xmlText = await xmlRes.body.text();
+        const dom = new JSDOM(xmlText, { contentType: 'text/xml' });
+        const docs = [...dom.window.document.querySelectorAll('doc')].slice(0, count);
+        const xmlCandidates = [];
+        for (const docNode of docs) {
+          const url = String(docNode.querySelector('url')?.textContent || '').trim();
+          const title = String(docNode.querySelector('title')?.textContent || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+          const passage = String(docNode.querySelector('passages passage, headline')?.textContent || '')
+            .replace(/<[^>]+>/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+          if (!url || !title) continue;
+          xmlCandidates.push({
+            url,
+            title: `[🇷🇺 RU] ${title} — Yandex Search`,
+            description: passage.length >= 40
+              ? `[🇷🇺 RU Yandex] ${passage}`
+              : `[🇷🇺 RU Yandex] ${title} — Indexed by Yandex Runet Search.`,
+            countryPole: 'RU'
+          });
+        }
+        if (xmlCandidates.length > 0) return xmlCandidates;
+      }
+    } catch (_) {
+      // prossegue para Tier 2
+    }
+  }
+
+  // Tier 2: Yandex Web HTML Parser com detecção instantânea de SmartCaptcha (302 /showcaptcha)
+  try {
+    const yandexHtmlTimeout = Math.min(timeoutMs, 2500);
+    const yandexWebUrl = `https://yandex.com/search/?text=${encodeURIComponent(cleanQuery)}&lr=213`;
+    const webRes = await httpRequest(yandexWebUrl, {
+      method: 'GET',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7'
+      },
+      headersTimeout: yandexHtmlTimeout,
+      bodyTimeout: yandexHtmlTimeout
+    });
+
+    const redirectLoc = String(webRes.headers?.location || '');
+    if (webRes.statusCode === 200 && !/showcaptcha|smartcaptcha/i.test(redirectLoc)) {
+      const html = await webRes.body.text();
+      if (html && !/showcaptcha|SmartCaptcha|CheckboxCaptcha/i.test(html)) {
+        const dom = new JSDOM(html);
+        const items = [...dom.window.document.querySelectorAll('li.serp-item, .serp-item')];
+        const webCandidates = [];
+        for (const item of items) {
+          if (webCandidates.length >= count) break;
+          const linkEl = item.querySelector('a.OrganicTitle-Link, a.Link, h2 a, a[href^="http"]');
+          const href = String(linkEl?.getAttribute('href') || '').trim();
+          const rawTitle = String(linkEl?.textContent || '').replace(/\s+/g, ' ').trim();
+          const rawSnippet = String(
+            item.querySelector('.OrganicTextContentSpan, .TextContainer, .Organic-ContentWrapper')?.textContent || ''
+          ).replace(/\s+/g, ' ').trim();
+          if (!href || !/^https?:\/\//i.test(href) || !rawTitle) continue;
+          if (/yandex\.(ru|com)\/(showcaptcha|tune|support|clck)/i.test(href)) continue;
+          webCandidates.push({
+            url: href,
+            title: `[🇷🇺 RU] ${rawTitle} — Yandex Search`,
+            description: rawSnippet.length >= 40
+              ? `[🇷🇺 RU Yandex] ${rawSnippet}`
+              : `[🇷🇺 RU Yandex] ${rawTitle} — Indexed via Yandex Runet Search.`,
+            countryPole: 'RU'
+          });
+        }
+        if (webCandidates.length > 0) return webCandidates;
+      }
+    }
+  } catch (_) {
+    // prossegue para Tier 3 (CyberLeninka Runet JSON API)
+  }
+
+  // Tier 3: CyberLeninka Runet Open Science JSON API (keyless, HTTP 200 ~220ms, 4M+ artigos científicos russos)
+  const queryAttempts = [cleanQuery];
+  const cleanFallback = String(fallbackQuery || '').replace(/\s+/g, ' ').trim();
+  if (cleanFallback && cleanFallback.toLowerCase() !== cleanQuery.toLowerCase()) {
+    queryAttempts.push(cleanFallback);
+  }
+
+  for (const qAttempt of queryAttempts) {
+    try {
+      const clRes = await httpRequest('https://cyberleninka.ru/api/search', {
+        method: 'POST',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36',
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          mode: 'articles',
+          q: qAttempt,
+          size: count,
+          from: 0
+        }),
+        headersTimeout: timeoutMs,
+        bodyTimeout: timeoutMs
+      });
+      if (clRes.statusCode !== 200) continue;
+      const data = await clRes.body.json();
+      const articles = Array.isArray(data?.articles) ? data.articles.slice(0, count) : [];
+      const candidates = [];
+
+      for (const art of articles) {
+        const rawLink = String(art?.link || '').trim();
+        const rawName = String(art?.name || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+        if (!rawLink || !rawName) continue;
+        const fullUrl = /^https?:\/\//i.test(rawLink)
+          ? rawLink
+          : `https://cyberleninka.ru${rawLink.startsWith('/') ? '' : '/'}${rawLink}`;
+        const rawAnnotation = String(
+          art?.annotation || (Array.isArray(art?.ocr) ? art.ocr[0] : '') || ''
+        )
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+        const year = art?.year ? String(art.year) : 'Runet';
+        const journal = String(art?.journal || '').replace(/<[^>]+>/g, '').trim();
+        const authors = Array.isArray(art?.authors) && art.authors.length > 0
+          ? ` (${art.authors.slice(0, 2).join(', ')})`
+          : '';
+        const metaPrefix = `[🇷🇺 RU Yandex // CyberLeninka (${year}${journal ? ` · ${journal}` : ''})]`;
+        candidates.push({
+          url: fullUrl,
+          title: `[🇷🇺 RU] ${rawName} — Yandex // CyberLeninka`,
+          description: rawAnnotation.length >= 60
+            ? `${metaPrefix} ${rawAnnotation}${authors}`
+            : `${metaPrefix} ${rawName}${authors} — Peer-reviewed Russian scientific article indexed in CyberLeninka Runet.`,
+          countryPole: 'RU'
+        });
+      }
+
+      if (candidates.length > 0) return candidates;
+    } catch (_) {
+      // tenta próximo fallback
+    }
+  }
+
+  return [];
+}
+
+/**
  * Pesquisa enciclopédica técnica diretamente em um idioma/polo específico (`en`, `zh`, `de`, `ja`, `ko`, `ru`, `pt`)
  * com controle de concorrência gentil (Wikimedia Polite Pool) e cache em memória.
  */
@@ -1954,6 +2136,7 @@ async function collectMultiPolarFederation(query, {
     krWiki,
     // 🇷🇺 Polo Rússia
     ruHabr,
+    ruYandex,
     ruOpenAlex,
     ruWiki,
     // 🇧🇷 Polo Brasil / Português
@@ -1990,6 +2173,7 @@ async function collectMultiPolarFederation(query, {
     isSoftwareDomain
       ? searchHabrRussia(poles.ru, { httpRequest, timeoutMs: 4500, count: 3, fallbackQuery: poles.enCore })
       : Promise.resolve([]),
+    searchYandexRussia(poles.ruWiki || poles.ru, { httpRequest, timeoutMs: 4500, count: 3, fallbackQuery: poles.enCore }),
     searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 4500, count: 3, countryCode: 'RU', countryPole: 'RU', countryBadge: '[🇷🇺 RU]' }),
     searchWikipediaByLang(poles.ruWiki, 'ru', { httpRequest, timeoutMs: 4000, count: 3, countryPole: 'RU', countryBadge: '[🇷🇺 RU]' }),
     // Brazil / Portuguese Pole
@@ -2035,7 +2219,8 @@ async function collectMultiPolarFederation(query, {
   ).slice(0, 5);
 
   const ruPool = interleaveArrays(
-    isSoftwareDomain ? ruHabr : ruWiki,
+    isSoftwareDomain ? ruHabr : ruYandex,
+    isSoftwareDomain ? ruYandex : ruWiki,
     ruOpenAlex,
     isSoftwareDomain ? ruWiki : []
   ).slice(0, 5);
@@ -2107,9 +2292,9 @@ async function localizeSourceHeadlines(sources = [], targetLang = 'pt-BR', {
     const repoPrefix = repoMatch ? `${repoMatch[1]} — ` : '';
     const textAfterRepo = repoMatch ? repoMatch[2].trim() : withoutBadge;
 
-    // Separa o sufixo de atribuição (ex: " — Wikipedia (ZH)", " — Habr Engineering")
+    // Separa o sufixo de atribuição (ex: " — Wikipedia (ZH)", " — Habr Engineering", " — Yandex Search")
     const suffixMatch = !repoMatch
-      ? textAfterRepo.match(/(\s+—\s+(?:Wikipedia\s*\([A-Z]{2}\)|Habr(?:\s+Engineering)?|ArXiv\s+Global\s+Preprint|GitHub\s+Repository))$/)
+      ? textAfterRepo.match(/(\s+—\s+(?:Wikipedia\s*\([A-Z]{2}\)|Habr(?:\s+Engineering)?|Yandex(?:\s+Search|\s*\/\/\s*CyberLeninka)?|ArXiv\s+Global\s+Preprint|GitHub\s+Repository))$/)
       : null;
     const suffix = suffixMatch ? suffixMatch[1] : '';
     const coreSubject = suffixMatch
@@ -2742,6 +2927,7 @@ module.exports = {
   searchWikipediaByLang,
   searchOpenAlexGlobal,
   searchHabrRussia,
+  searchYandexRussia,
   searchArxivGlobal,
   searchHackerNewsGlobal,
   searchGitHubGlobal,

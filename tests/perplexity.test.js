@@ -20,6 +20,7 @@ const {
   scoreResultCoherence,
   normalizeTopResults,
   selectMultiPolarTopResults,
+  searchYandexRussia,
   reconstructOpenAlexAbstract
 } = require('../src/search');
 const { extractReadablePage, extractTopSources, buildSnippetFallbackSource } = require('../src/extractor');
@@ -1402,6 +1403,77 @@ test('17. Zero CS-Hardcode & Classificação Multidisciplinar em 8 Domínios (Po
   assert.match(qntPoles.cn, /量子纠错.*超导量子比特/);
   assert.match(qntPoles.jp, /量子誤り訂正.*超伝導量子ビット/);
 });
+
+test('18. Motor Yandex + Runet (searchYandexRussia): cascata 3-Tier (Yandex Web HTML .serp-item -> bypass SmartCaptcha 302 -> CyberLeninka Runet JSON API)', async () => {
+  // Cenário A: Yandex Web retorna 200 com cards .serp-item válidos
+  const yandexDirectResults = await searchYandexRussia('Токамак термоядерный синтез', {
+    env: {},
+    httpRequest: async (url) => {
+      assert.match(url, /yandex\.com\/search\/\?text=/);
+      return {
+        statusCode: 200,
+        headers: {},
+        body: {
+          text: async () => `<!DOCTYPE html><html><body>
+            <li class="serp-item">
+              <h2><a class="OrganicTitle-Link" href="https://urchatov.ru/tokamak-t15md">Токамак Т-15МД в Курчатовском институте</a></h2>
+              <div class="OrganicTextContentSpan">Экспериментальная термоядерная установка токамак Т-15МД для удержания высокотемпературной плазмы и исследований синтеза.</div>
+            </li>
+          </body></html>`
+        }
+      };
+    }
+  });
+  assert.equal(yandexDirectResults.length, 1);
+  assert.equal(yandexDirectResults[0].countryPole, 'RU');
+  assert.equal(yandexDirectResults[0].url, 'https://urchatov.ru/tokamak-t15md');
+  assert.match(yandexDirectResults[0].title, /^\[🇷🇺 RU\] Токамак Т-15МД.*— Yandex Search$/);
+
+  // Cenário B: Yandex Web retorna 302 Found -> /showcaptcha (SmartCaptcha) e aciona fallback imediato para CyberLeninka Runet JSON API
+  const calls = [];
+  const runetFallbackResults = await searchYandexRussia('Токамак термоядерный синтез', {
+    env: {},
+    httpRequest: async (url, opts) => {
+      calls.push({ url, method: opts?.method || 'GET' });
+      if (url.includes('yandex.com/search/')) {
+        return {
+          statusCode: 302,
+          headers: { location: 'https://yandex.com/showcaptcha?cc=1&retpath=...' },
+          body: { text: async () => '' }
+        };
+      }
+      assert.equal(url, 'https://cyberleninka.ru/api/search');
+      assert.equal(opts.method, 'POST');
+      return {
+        statusCode: 200,
+        headers: { 'content-type': 'application/json' },
+        body: {
+          json: async () => ({
+            found: 142,
+            articles: [
+              {
+                name: 'Магнитное удержание плазмы в установках <b>Токамак</b> нового поколения',
+                link: '/article/n/magnitnoe-uderzhanie-plazmy-tokamak',
+                year: 2024,
+                journal: 'Атомная энергия',
+                authors: ['Иванов А.В.', 'Петров С.Н.'],
+                annotation: 'В статье рассматриваются физические принципы магнитного удержания высокотемпературной плазмы в термоядерных реакторах токамак и гибридных системах.'
+              }
+            ]
+          })
+        }
+      };
+    }
+  });
+
+  assert.equal(calls.length, 2);
+  assert.equal(runetFallbackResults.length, 1);
+  assert.equal(runetFallbackResults[0].countryPole, 'RU');
+  assert.equal(runetFallbackResults[0].url, 'https://cyberleninka.ru/article/n/magnitnoe-uderzhanie-plazmy-tokamak');
+  assert.match(runetFallbackResults[0].title, /^\[🇷🇺 RU\] Магнитное удержание плазмы в установках Токамак нового поколения — Yandex \/\/ CyberLeninka$/);
+  assert.match(runetFallbackResults[0].description, /Атомная энергия/);
+});
+
 
 
 

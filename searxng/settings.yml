@@ -17,3 +17,11 @@ server:
   limiter: false
   image_proxy: false
   method: "GET"
+
+engines:
+  - name: yandex
+    engine: yandex
+    shortcut: ya
+    disabled: false
+    timeout: 4.5
+

@@ -203,11 +203,15 @@ async function extractReadablePage(targetUrl, fallbackTitle = '', options = {}) 
     const words = excerpt.split(/\s+/).filter(Boolean);
     const domain = parsedUrl.hostname.replace(/^www\./i, '');
     const poleMatch = String(fallbackTitle || '').match(/^(\[(?:🇺🇸|🇨🇳|🇩🇪|🇯🇵|🇰🇷|🇷🇺|🇧🇷|🌍)[^\]]+\])\s*/);
+    const yandexSuffixMatch = String(fallbackTitle || '').match(/(\s+—\s+Yandex(?:\s+Search|\s*\/\/\s*CyberLeninka)?)$/);
     const extractedCandidate = String(article?.title || '').replace(/\s+/g, ' ').trim();
     const rawExtractedTitle = (extractedCandidate.length >= 15 ? extractedCandidate : String(fallbackTitle || extractedCandidate || domain)).replace(/\s+/g, ' ').trim();
-    const title = poleMatch && !rawExtractedTitle.startsWith('[')
+    const baseTitle = poleMatch && !rawExtractedTitle.startsWith('[')
       ? `${poleMatch[1]} ${rawExtractedTitle}`
       : rawExtractedTitle;
+    const title = yandexSuffixMatch && !/Yandex/i.test(baseTitle)
+      ? `${baseTitle}${yandexSuffixMatch[1]}`
+      : baseTitle;
     const siteName = String(article?.siteName || domain).replace(/\s+/g, ' ').trim();
 
     return {
