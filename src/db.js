@@ -9,7 +9,11 @@ const Database = require('better-sqlite3');
  * Todas as conversas são identificadas na barra lateral pela primeira pergunta feita.
  */
 function createDatabase(customDbPath) {
-  const dbPath = customDbPath || process.env.DB_PATH || path.join(__dirname, '..', 'data', 'perplexity.sqlite');
+  const projectRoot = path.join(__dirname, '..');
+  const rawDbPath = customDbPath || process.env.DB_PATH || path.join(projectRoot, 'data', 'perplexity.sqlite');
+  const dbPath = (rawDbPath !== ':memory:' && !customDbPath && !path.isAbsolute(rawDbPath))
+    ? path.resolve(projectRoot, rawDbPath)
+    : rawDbPath;
 
   if (dbPath !== ':memory:') {
     const dir = path.dirname(path.resolve(dbPath));

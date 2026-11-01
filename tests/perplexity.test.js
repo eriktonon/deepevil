@@ -1474,6 +1474,26 @@ test('18. Motor Yandex + Runet (searchYandexRussia): cascata 3-Tier (Yandex Web 
   assert.match(runetFallbackResults[0].description, /Атомная энергия/);
 });
 
+test('19. Desenviesamento de Busca (UVB-76 U+2011, Rádio do Fim do Mundo e ModelScope vs Hugging Face)', () => {
+  // 1. Normalização de hífen não-quebrável Unicode (U+2011) em callsigns como UVB‑76
+  const uvbPoles = buildMultiPolarQueries('UVB\u201176', 'web');
+  assert.equal(uvbPoles.enCore, 'UVB-76');
+  assert.equal(uvbPoles.usWiki, 'UVB-76');
+
+  // 2. Tradução léxica de "Radio do fim do mundo tocou na russia" -> doomsday broadcast
+  const radioGlobal = toGlobalResearchQuery('Radio do fim do mundo tocou na russia', { forceGlobal: true });
+  assert.match(radioGlobal, /doomsday/i);
+  assert.match(radioGlobal, /broadcast/i);
+
+  // 3. Mapeamento de "site de llm china concorrente do hugface" -> ModelScope & Hugging Face
+  const hfPoles = buildMultiPolarQueries('site de llm china concorrente do hugface', 'web');
+  assert.equal(hfPoles.us, 'ModelScope');
+  assert.match(hfPoles.enCore, /ModelScope/i);
+  assert.match(hfPoles.cn, /魔搭社区/);
+  assert.match(hfPoles.cn, /ModelScope/);
+});
+
+
 
 
 

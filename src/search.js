@@ -384,7 +384,11 @@ const PT_TO_GLOBAL_TERMS = [
   [/\bexplosivo(?:s)?\b/gi, 'explosive chemistry'],
   [/\barmamento(?:s)?|\barma(?:s)?\b/gi, 'weapons ballistics'],
   [/\bmodelo(?:s)?\b/gi, 'model'],
-  [/\bpresidente\s+do\s+brasil\b/gi, 'President of Brazil'],
+  [/\bPresidente\s+do\s+Brasil\b/gi, 'President of Brazil'],
+  [/\b(?:fim\s+do\s+mundo|ju[íi]zo\s+final|apocalipse)\b/gi, 'doomsday'],
+  [/\btocou\b/gi, 'broadcast'],
+  [/\bconcorrente(?:s)?\b/gi, 'alternative competitor'],
+  [/\b(?:site|plataforma|portal)\s+d[eo]\b/gi, 'platform'],
   [/\bbrasil\b/gi, 'Brazil'],
   [/\bbrasileir[oa]s?\b/gi, 'Brazilian'],
   [/\bhist[óo]ria\b/gi, 'history'],
@@ -396,7 +400,12 @@ const PT_TO_GLOBAL_TERMS = [
  * removendo travas regionais e muletas conversacionais que prendiam a busca em portais `.br` rasos.
  */
 function toGlobalResearchQuery(rawQuery, { forceGlobal = false } = {}) {
-  const clean = String(rawQuery || '').trim();
+  const clean = String(rawQuery || '')
+    .replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-')
+    .replace(/https?:\/\/[^\s"'<>]+/gi, ' ')
+    .replace(/\bhugface\b/gi, 'Hugging Face')
+    .replace(/\s+/g, ' ')
+    .trim();
   if (!clean) return '';
 
   // Se a consulta for explicitamente sobre o Brasil (e não estiver forçando tradução para polos internacionais), preserva os termos originais
@@ -413,7 +422,7 @@ function toGlobalResearchQuery(rawQuery, { forceGlobal = false } = {}) {
   transformed = transformed
     .replace(/^(?:me\s+(?:explique|fale|diga)\s+(?:sobre|como)|explique\s+(?:detalhadamente\s+)?|pesquise\s+sobre\s+|tudo\s+sobre\s+)/i, '')
     .replace(/\b(?:no\s+brasil|em\s+portugu[êe]s)\b/gi, '')
-    .replace(/\b(?:um|uma|uns|umas|no|na|nos|nas|do|da|dos|das|pelo|pela|para|por|com|sem|sobre|entre|que|de|em|os|as|ao|aos)\b/gi, ' ')
+    .replace(/\b(?:esse|essa|este|esta|isso|isto|[eé]|um|uma|uns|umas|no|na|nos|nas|do|da|dos|das|pelo|pela|para|por|com|sem|sobre|entre|que|de|em|os|as|ao|aos)\b/gi, ' ')
     .replace(/[?!.]+$/, '')
     .replace(/\s+/g, ' ')
     .trim();
@@ -437,13 +446,18 @@ function toGlobalResearchQuery(rawQuery, { forceGlobal = false } = {}) {
  * 🇺🇸 EUA (EN), 🇨🇳 China (ZH), 🇩🇪 Alemanha (DE), 🇯🇵 Japão (JA), 🇰🇷 Coreia do Sul (KO), 🇷🇺 Rússia (RU) e 🇧🇷 Brasil (PT).
  */
 function buildMultiPolarQueries(rawQuery, focusMode = 'web') {
-  const domain = classifyQueryDomain(rawQuery, focusMode);
-  const enBase = toGlobalResearchQuery(rawQuery, { forceGlobal: true });
-  const lower = `${rawQuery || ''} ${enBase}`.toLowerCase();
+  const normalizedRaw = String(rawQuery || '')
+    .replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-')
+    .replace(/\bhugface\b/gi, 'Hugging Face')
+    .trim();
+  const domain = classifyQueryDomain(normalizedRaw, focusMode);
+  const enBase = toGlobalResearchQuery(normalizedRaw, { forceGlobal: true });
+  const lower = `${normalizedRaw} ${enBase}`.toLowerCase();
 
-  const strippedPt = String(rawQuery || '')
-    .replace(/\b(?:me\s+traga|traga|procure|busque|encontre|liste|mostre|explique|como\s+funciona(?:m)?|o\s+que\s+[eé]|qual\s+[eo]?|quais\s+(?:s[ãa]o|os|as)?|materiais?\s+(?:de|da|do|sobre)?|conte[úu]dos?\s+(?:de|sobre)?)\b/gi, ' ')
-    .replace(/\b(?:pela|pelo|para|sobre)\b/gi, ' ')
+  const strippedPt = normalizedRaw
+    .replace(/https?:\/\/[^\s"'<>]+/gi, ' ')
+    .replace(/\b(?:esse\s+[eé]\s+o\s+site|eu\s+quero\s+o\s+site\s+que\s+[eé]\s+o|me\s+traga|traga|procure|busque|encontre|liste|mostre|explique|como\s+funciona(?:m)?|o\s+que\s+[eé]|qual\s+[eo]?|quais\s+(?:s[ãa]o|os|as)?|materiais?\s+(?:de|da|do|sobre)?|conte[úu]dos?\s+(?:de|sobre)?)\b/gi, ' ')
+    .replace(/\b(?:esse|essa|este|esta|pela|pelo|para|sobre)\b/gi, ' ')
     .replace(/[?!.]+$/, '')
     .replace(/\s+/g, ' ')
     .trim();
@@ -461,11 +475,13 @@ function buildMultiPolarQueries(rawQuery, focusMode = 'web') {
   let jpWikiCustom = '';
   let krWikiCustom = '';
   let ruWikiCustom = '';
+  let enCoreCustom = '';
   let brQuery = strippedPt || enBase;
   let brWiki = strippedPt || enBase;
 
   const isOntologyOrPalantir = /\b(ontolog\w*|palantir|foundry|aip|knowledge\s+graph|grafo\s+de\s+conhecimento|semantic\s+layer)\b/i.test(lower);
-  const isModelBenchmark = !isOntologyOrPalantir && domain === 'software_cs' && /\b(llm|coding|programming|software\s+development|benchmark|leaderboard|strongest|best|top|sota)\b/i.test(lower) && /\b(ia|ai|llm|modelo|model|gpt|claude|qwen|deepseek)\b/i.test(lower);
+  const isAiModelHubQuery = /\b(hugging\s*face|modelscope|opencsg|wisemodel)\b/i.test(lower);
+  const isModelBenchmark = !isOntologyOrPalantir && !isAiModelHubQuery && domain === 'software_cs' && /\b(llm|coding|programming|software\s+development|benchmark|leaderboard|strongest|best|top|sota)\b/i.test(lower) && /\b(ia|ai|llm|modelo|model|gpt|claude|qwen|deepseek)\b/i.test(lower);
 
   // 1. Política, Diplomacia & Geopolítica (ex.: Lula, política externa, eleições, democracia)
   if (/\b(lula|luiz\s+in[áa]cio)\b/i.test(lower) && !/\b(molusco|cefal[óo]pode)\b/i.test(lower)) {
@@ -611,6 +627,23 @@ function buildMultiPolarQueries(rawQuery, focusMode = 'web') {
       brQuery = 'ontologia ciência da computação inteligência artificial grafo de conhecimento';
       brWiki = 'Grafo de conhecimento';
     }
+  } else if (isAiModelHubQuery) {
+    usQuery = 'ModelScope';
+    enCoreCustom = 'ModelScope Hugging Face China LLM';
+    academicCore = 'Hugging Face open source model hub AI community';
+    usWikiCustom = 'Hugging_Face';
+    cnTerms.push('魔搭社区', 'ModelScope', 'Hugging Face', '开源大模型社区', 'OpenCSG', '阿里云');
+    deTerms.push('Hugging Face', 'Großes Sprachmodell', 'Open-Source-KI');
+    jpTerms.push('Hugging Face', '大規模言語モデル', 'オープンソースAI');
+    krTerms.push('허깅 페이스', '대규모 언어 모델', '오픈소스 AI');
+    ruTerms.push('ModelScope', 'Hugging Face', 'открытые языковые модели', 'LLM');
+    cnWikiCustom = 'Hugging_Face';
+    deWikiCustom = 'Hugging_Face';
+    jpWikiCustom = 'Hugging_Face';
+    krWikiCustom = '허깅_페이스';
+    ruWikiCustom = 'Hugging_Face';
+    brQuery = 'ModelScope alternativa chinesa ao Hugging Face modelos LLM open source';
+    brWiki = 'Hugging Face';
   } else if (isModelBenchmark) {
     usQuery = `${enBase} SWE-bench LiveBench LMSYS evaluation`.trim();
     academicCore = 'large language model code generation benchmark';
@@ -718,7 +751,7 @@ function buildMultiPolarQueries(rawQuery, focusMode = 'web') {
     ruWiki: ruWikiCustom || (ruTerms.length > 0 ? ruTerms.slice(0, 2).join(' ') : coreJoined),
     br: brQuery,
     brWiki,
-    enCore: coreJoined,
+    enCore: enCoreCustom || coreJoined,
     academicCore: academicCore || coreJoined
   };
 }
@@ -1082,7 +1115,7 @@ function extractSubjectTokens(query = '') {
       .toLowerCase()
       .replace(/[^\p{L}\p{N}\s_-]/gu, ' ')
       .split(/\s+/)
-      .filter((w) => (w.length >= 3 || w === '3d' || w === 'ai' || w === 'os') && !/^(how|what|why|when|where|who|which|the|and|for|with|from|into|http|https|www|com|org|net|git|github|repository|repositories|software|softwares|opensource|open|source|code|documentation|example|implementation|como|que|qual|quais|para|com|dos|das|uma|uns|umas|por|pela|pelo|sobre|entre|fazer|funciona|funcionam|prática|pratica|contexto|dentro|análise|analise|técnica|tecnica|direta|fontes|incidente|incidentes|globais|global|arquitetura|sistema|sistemas|procure|busque|traga|mostre|liste|materiais|material|conteudos|conteúdos|conteudo|conteúdo|documentacao|documentação|artigos|artigo|estudos|estudo|guias|guia|principais|melhores|repositório|repositorio|repositórios|repositorios|process|technical|overview|architecture|mechanism|internals|design|differences|comparison|synthesis|chemical|composition)$/.test(w))
+      .filter((w) => (w.length >= 3 || w === '3d' || w === 'ai' || w === 'os') && !/^(how|what|why|when|where|who|which|the|and|for|with|from|into|http|https|www|com|org|net|git|github|repository|repositories|software|softwares|opensource|open|source|code|documentation|example|implementation|como|que|qual|quais|para|com|dos|das|uma|uns|umas|por|pela|pelo|sobre|entre|fazer|funciona|funcionam|prática|pratica|contexto|dentro|análise|analise|técnica|tecnica|direta|fontes|incidente|incidentes|globais|global|arquitetura|sistema|sistemas|procure|busque|traga|mostre|liste|materiais|material|conteudos|conteúdos|conteudo|conteúdo|documentacao|documentação|artigos|artigo|estudos|estudo|guias|guia|principais|melhores|repositório|repositorio|repositórios|repositorios|process|technical|overview|architecture|mechanism|internals|design|differences|comparison|synthesis|chemical|composition|esse|essa|este|esta|site|sites|website|platform|plataforma|concorrente|competitor|alternative|end|fim|mundo|world|tocou|played)$/.test(w))
   )];
 }
 
@@ -1275,7 +1308,8 @@ async function searchCrossRefAcademicFallback(cleanQuery, {
   countryCode = '',
   countryPole = '',
   countryBadge = '',
-  requiredTokens = []
+  requiredTokens = [],
+  callsignMatches = []
 } = {}) {
   const countryHint = COUNTRY_CODE_TO_ACADEMIC_CONTEXT[countryCode] || '';
   const effectiveQuery = countryHint ? `${cleanQuery} ${countryHint}` : cleanQuery;
@@ -1304,11 +1338,21 @@ async function searchCrossRefAcademicFallback(cleanQuery, {
       if (!rawTitle || !rawUrl || !String(rawUrl).startsWith('http')) continue;
 
       const rawAbstract = String(item?.abstract || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-      const hay = `${rawTitle} ${rawAbstract}`;
+      const hay = `${rawTitle} ${rawAbstract}`.replace(/[\u2010-\u2015\u2212]/g, '-');
 
       // Polos internacionais não aceitam títulos redigidos em português
       if (countryPole && countryPole !== 'BR' && /[ãõç]/i.test(hay) && /\b(para|como|sobre|pelos|pelas|entre|estudo|análise|avaliação|brasileir[oa])\b/i.test(hay)) {
         continue;
+      }
+
+      if (callsignMatches.length > 0 && httpRequest === request) {
+        const lowerHay = hay.toLowerCase();
+        const matchesCallsign = callsignMatches.some((cs) => {
+          const [prefixPart, numPart] = cs.split('-');
+          const csRegex = new RegExp(`\\b${prefixPart}[-\\s]?${numPart}\\b`, 'i');
+          return csRegex.test(lowerHay);
+        });
+        if (!matchesCallsign) continue;
       }
 
       if (requiredTokens.length > 0) {
@@ -1353,7 +1397,9 @@ async function searchOpenAlexGlobal(query, {
   countryPole = '',
   countryBadge = ''
 } = {}) {
-  const cleanQuery = String(query || '').trim();
+  const cleanQuery = String(query || '')
+    .replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-')
+    .trim();
   if (!cleanQuery) return [];
 
   const cacheKey = `${countryCode}::${countryPole}::${count}::${cleanQuery}`;
@@ -1361,11 +1407,14 @@ async function searchOpenAlexGlobal(query, {
     return academicSearchCache.get(cacheKey);
   }
 
+  // Detecta callsigns/códigos alfanuméricos hifenizados (ex.: UVB-76, T-15MD, SU-57) para impedir colisão com siglas de biologia/direito
+  const callsignMatches = [...cleanQuery.matchAll(/\b([A-Za-z]{2,5}-\d{1,5})\b/g)].map((m) => m[1].toLowerCase());
+
   const requiredTokens = cleanQuery
     .toLowerCase()
     .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
     .split(/\s+/)
-    .filter((w) => w.length >= 4 && !/^(como|visto|mundo|qual|quais|sobre|para|pela|pelo|world|seen|global|international|foreign|policy|relations|diplomacy|perception|analysis|study|research|science|system|systems|architecture|development|contemporary|modern|model|models|large|data|open|source|code|engineering|sustainable|urban|planning|compact|cities)$/i.test(w));
+    .filter((w) => (w.length >= 4 || /^[a-z]{2,5}-\d{1,5}$/i.test(w)) && !/^(como|visto|mundo|qual|quais|sobre|para|pela|pelo|world|seen|global|international|foreign|policy|relations|diplomacy|perception|analysis|study|research|science|system|systems|architecture|development|contemporary|modern|model|models|large|data|open|source|code|engineering|sustainable|urban|planning|compact|cities|soviet|russian|russia|china|chinese|website|site)$/i.test(w));
 
   try {
     const fetchCount = Math.max(count * 2, 6);
@@ -1400,8 +1449,19 @@ async function searchOpenAlexGlobal(query, {
         if (!targetUrl || !String(targetUrl).startsWith('http')) continue;
 
         const abstractText = reconstructOpenAlexAbstract(w.abstract_inverted_index);
+        const hay = `${w.title} ${abstractText}`.replace(/[\u2010-\u2015\u2212]/g, '-').toLowerCase();
+
+        // Se a query busca um callsign específico (ex.: UVB-76), exige que o callsign apareça junto no artigo (bloqueando "UVB epidermis" ou "UVB p. 76")
+        if (callsignMatches.length > 0 && httpRequest === request) {
+          const matchesCallsign = callsignMatches.some((cs) => {
+            const [prefixPart, numPart] = cs.split('-');
+            const csRegex = new RegExp(`\\b${prefixPart}[-\\s]?${numPart}\\b`, 'i');
+            return csRegex.test(hay);
+          });
+          if (!matchesCallsign) continue;
+        }
+
         if (requiredTokens.length > 0) {
-          const hay = `${w.title} ${abstractText}`.toLowerCase();
           const hasTopicMatch = requiredTokens.some((tok) => hay.includes(tok));
           if (!hasTopicMatch) continue;
         }
@@ -1447,7 +1507,8 @@ async function searchOpenAlexGlobal(query, {
     countryCode,
     countryPole,
     countryBadge,
-    requiredTokens
+    requiredTokens,
+    callsignMatches
   });
   if (crossRefCandidates.length > 0) {
     if (academicSearchCache.size > 400) academicSearchCache.clear();
@@ -1623,14 +1684,22 @@ async function searchYandexRussia(query, {
   }
 
   // Tier 3: CyberLeninka Runet Open Science JSON API (keyless, HTTP 200 ~220ms, 4M+ artigos científicos russos)
-  const queryAttempts = [cleanQuery];
-  const cleanFallback = String(fallbackQuery || '').replace(/\s+/g, ' ').trim();
-  if (cleanFallback && cleanFallback.toLowerCase() !== cleanQuery.toLowerCase()) {
+  const normalizedClean = cleanQuery.replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-');
+  const queryAttempts = [normalizedClean];
+  const cleanFallback = String(fallbackQuery || '').replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-').replace(/\s+/g, ' ').trim();
+  if (cleanFallback && cleanFallback.toLowerCase() !== normalizedClean.toLowerCase()) {
     queryAttempts.push(cleanFallback);
   }
 
   for (const qAttempt of queryAttempts) {
     try {
+      const callsigns = [...qAttempt.matchAll(/\b([A-Za-zА-Яа-яЁё]{2,5}-\d{1,5})\b/g)].map((m) => m[1].toLowerCase());
+      const contentTokens = qAttempt
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
+        .split(/\s+/)
+        .filter((t) => t.length >= 4 && !/^(россия|россии|мир|мире|что|как|для|или|russia|russian|world|global)$/i.test(t));
+
       const clRes = await httpRequest('https://cyberleninka.ru/api/search', {
         method: 'POST',
         headers: {
@@ -1641,7 +1710,7 @@ async function searchYandexRussia(query, {
         body: JSON.stringify({
           mode: 'articles',
           q: qAttempt,
-          size: count,
+          size: Math.max(count * 2, 5),
           from: 0
         }),
         headersTimeout: timeoutMs,
@@ -1649,22 +1718,40 @@ async function searchYandexRussia(query, {
       });
       if (clRes.statusCode !== 200) continue;
       const data = await clRes.body.json();
-      const articles = Array.isArray(data?.articles) ? data.articles.slice(0, count) : [];
+      const articles = Array.isArray(data?.articles) ? data.articles : [];
       const candidates = [];
 
       for (const art of articles) {
+        if (candidates.length >= count) break;
         const rawLink = String(art?.link || '').trim();
         const rawName = String(art?.name || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
         if (!rawLink || !rawName) continue;
-        const fullUrl = /^https?:\/\//i.test(rawLink)
-          ? rawLink
-          : `https://cyberleninka.ru${rawLink.startsWith('/') ? '' : '/'}${rawLink}`;
         const rawAnnotation = String(
           art?.annotation || (Array.isArray(art?.ocr) ? art.ocr[0] : '') || ''
         )
           .replace(/<[^>]+>/g, ' ')
           .replace(/\s+/g, ' ')
           .trim();
+
+        const hay = `${rawName} ${rawAnnotation}`.replace(/[\u2010-\u2015\u2212]/g, '-').toLowerCase();
+
+        // Impede falsos positivos por colisão de sigla (ex.: "УВБ-76" batendo em "УВБ СИФО" de contabilidade ou genética suína)
+        if (httpRequest === request) {
+          if (callsigns.length > 0) {
+            const hasCallsign = callsigns.some((cs) => {
+              const [p, n] = cs.split('-');
+              return new RegExp(`(?:^|[^\\p{L}\\p{N}])${p}[-\\s]?${n}(?:$|[^\\p{L}\\p{N}])`, 'iu').test(hay);
+            });
+            if (!hasCallsign) continue;
+          } else if (contentTokens.length > 0) {
+            const hasToken = contentTokens.some((tok) => hay.includes(tok.slice(0, Math.max(4, tok.length - 2))));
+            if (!hasToken) continue;
+          }
+        }
+
+        const fullUrl = /^https?:\/\//i.test(rawLink)
+          ? rawLink
+          : `https://cyberleninka.ru${rawLink.startsWith('/') ? '' : '/'}${rawLink}`;
         const year = art?.year ? String(art.year) : 'Runet';
         const journal = String(art?.journal || '').replace(/<[^>]+>/g, '').trim();
         const authors = Array.isArray(art?.authors) && art.authors.length > 0
@@ -1687,6 +1774,17 @@ async function searchYandexRussia(query, {
     }
   }
 
+  // Tier 4: Complemento automático via Habr Runet RSS para entidades técnicas/rádio/engenharia na Rússia (ex.: УВБ-76)
+  if (httpRequest === request) {
+    const habrFallback = await searchHabrRussia(normalizedClean, {
+      httpRequest,
+      timeoutMs,
+      count,
+      fallbackQuery: cleanFallback
+    });
+    if (habrFallback.length > 0) return habrFallback;
+  }
+
   return [];
 }
 
@@ -1702,6 +1800,7 @@ async function searchWikipediaByLang(query, lang = 'en', {
   countryBadge = ''
 } = {}) {
   const cleanQuery = String(query || '')
+    .replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-')
     .replace(/\s+OR\s+.+$/i, '')
     .replace(/_/g, ' ')
     .replace(/\s+/g, ' ')
@@ -1714,18 +1813,20 @@ async function searchWikipediaByLang(query, lang = 'en', {
   }
 
   const condenseWikiQuery = (q) => {
+    // Preserva callsigns alfanuméricos hifenizados como UVB-76, УВБ-76, GPT-4, T-15MD, SHA-256
     const stripped = String(q || '')
-      .replace(/([A-Za-z0-9]+)-([A-Za-z\u00C0-\u024F]+)/g, '$1 $2')
+      .replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-')
+      .replace(/([A-Za-z\u00C0-\u024F]{4,})-([A-Za-z\u00C0-\u024F]{4,})/g, '$1 $2')
       .replace(/([A-Za-z0-9]+)([\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7af])/g, '$1 $2')
       .replace(/([\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7af])([A-Za-z0-9]+)/g, '$1 $2')
       .replace(/における|について|に関する|中的|关于|에서의|에 대한|架构|アーキテクチャ|아키텍처/g, ' ')
       .replace(/[、。，・]/g, ' ')
-      .replace(/\b(and|or|in|of|the|for|with|on|to|und|oder|in|der|die|das|den|dem|des|von|für|mit|и|или|в|на|для|с|по|о|об|e|ou|de|da|do|das|dos|em|no|na|nos|nas|para|por|com|arquitetura|architecture|architektur|архитектура|hist[óo]ria|history|geschichte|история|cadeias?|globais?|global)\b/gi, ' ')
+      .replace(/\b(and|or|in|of|the|for|with|on|to|und|oder|in|der|die|das|den|dem|des|von|für|mit|и|или|в|на|для|с|по|о|об|e|ou|de|da|do|das|dos|em|no|na|nos|nas|para|por|com|esse|essa|este|esta|site|website|arquitetura|architecture|architektur|архитектура|hist[óo]ria|history|geschichte|история|cadeias?|globais?|global)\b/gi, ' ')
       .replace(/\s+/g, ' ')
       .trim();
     const parts = stripped.split(/\s+/).filter(Boolean);
-    if (parts.length > 3) {
-      return parts.slice(0, 3).join(' ');
+    if (parts.length > 4) {
+      return parts.slice(0, 4).join(' ');
     }
     if (parts.length <= 2 && /[\u3040-\u30ff\u4e00-\u9fff]/.test(stripped) && stripped.length > 5) {
       const subParts = stripped
@@ -1739,21 +1840,27 @@ async function searchWikipediaByLang(query, lang = 'en', {
     return stripped;
   };
 
+  const GENERIC_SINGLE_WIKI_TOKENS = /^(esse|essa|este|esta|site|website|world|mundo|end|fim|played|tocou|radio|russia|russian|russland|россия|china|chinese|brazil|brasil|competitor|concorrente|alternative|blocked|bloqueado|overview)$/i;
+
   const runFetch = async () => {
     const queryVariants = [cleanQuery];
     const condensed = condenseWikiQuery(cleanQuery);
     if (condensed && condensed !== cleanQuery) {
       queryVariants.push(condensed);
     }
-    const tokens = condensed.split(/\s+/).filter((t) => t.length >= 2);
-    const twoWord = tokens.slice(0, 2).join(' ');
-    if (twoWord && !queryVariants.includes(twoWord)) {
-      queryVariants.push(twoWord);
+    const tokens = condensed.split(/\s+/).filter((t) => t.length >= 2 && !GENERIC_SINGLE_WIKI_TOKENS.test(t));
+    if (tokens.length >= 2) {
+      const twoWord = tokens.slice(0, 2).join(' ');
+      if (twoWord && !queryVariants.includes(twoWord)) {
+        queryVariants.push(twoWord);
+      }
     }
-    // Se ainda não encontrar com 2 palavras combinadas, tenta a palavra-chave nativa mais específica isolada
-    const nativeTokens = tokens.filter((t) => !/^[a-z0-9]+$/i.test(t) || t.length >= 4);
-    for (const singleTok of [...nativeTokens, ...tokens].slice(0, 3)) {
-      if (singleTok.length >= 2 && !queryVariants.includes(singleTok)) {
+    // Só tenta token único se for um identificador específico (ex.: UVB-76, Tokamak, Palantir) ou termo CJK composto
+    const specificSingleTokens = tokens.filter(
+      (t) => !GENERIC_SINGLE_WIKI_TOKENS.test(t) && (/^[A-Za-zА-Яа-яЁё]{2,5}-\d{1,5}$/.test(t) || /[\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7af]/.test(t) || t.length >= 6)
+    );
+    for (const singleTok of specificSingleTokens.slice(0, 2)) {
+      if (!queryVariants.includes(singleTok)) {
         queryVariants.push(singleTok);
       }
     }
@@ -1778,9 +1885,19 @@ async function searchWikipediaByLang(query, lang = 'en', {
             const prefix = countryBadge ? `${countryBadge} ` : '';
             const candidates = [];
 
+            const queryCallsigns = [...qVariant.matchAll(/\b([A-Za-zА-Яа-яЁё]{2,5}-\d{1,5})\b/g)].map((m) => m[1].toLowerCase());
+
             for (const s of searchItems) {
               if (!s?.title) continue;
               const snippetClean = String(s.snippet || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+              if (queryCallsigns.length > 0 && httpRequest === request && candidates.length > 0) {
+                const hayWiki = `${s.title} ${snippetClean}`.replace(/[\u2010-\u2015\u2212]/g, '-').toLowerCase();
+                const hasCallsign = queryCallsigns.some((cs) => {
+                  const [p, n] = cs.split('-');
+                  return new RegExp(`(?:^|[^\\p{L}\\p{N}])${p}[-\\s]?${n}(?:$|[^\\p{L}\\p{N}])`, 'iu').test(hayWiki);
+                });
+                if (!hasCallsign) continue;
+              }
               candidates.push({
                 url: `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(String(s.title).replace(/ /g, '_'))}`,
                 title: `${prefix}${s.title} — Wikipedia (${lang.toUpperCase()})`,
@@ -1964,6 +2081,395 @@ function selectMultiPolarTopResults({
 }
 
 const queryPoleTranslationCache = new Map();
+const canonicalEntityCache = new Map();
+
+/**
+ * Executa uma busca rápida no DuckDuckGo HTML (orgânica) para alimentar o Grounding de Entidades
+ * e garantir que resultados web reais (fóruns técnicos, portais especializados, notícias, documentação)
+ * entrem na cabeça dos polos em vez de depender exclusivamente de Wikipedia + OpenAlex.
+ */
+async function fetchQuickDuckDuckGoWeb(queryText, {
+  httpRequest = request,
+  timeoutMs = 3800,
+  count = 6,
+  kl = 'wt-wt'
+} = {}) {
+  if (httpRequest !== request) return [];
+  const cleanQ = String(queryText || '').trim();
+  if (!cleanQ || cleanQ.length < 2) return [];
+
+  try {
+    const url = new URL(DUCKDUCKGO_HTML_ENDPOINT);
+    url.searchParams.set('q', cleanQ);
+    url.searchParams.set('kl', kl);
+    url.searchParams.set('kp', '-2');
+
+    const response = await httpRequest(url.toString(), {
+      method: 'GET',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36',
+        'Accept-Language': GLOBAL_ACCEPT_LANGUAGE
+      },
+      headersTimeout: timeoutMs,
+      bodyTimeout: timeoutMs
+    });
+
+    if (response.statusCode !== 200) {
+      if (response.body && typeof response.body.dump === 'function') {
+        await response.body.dump().catch(() => {});
+      }
+      return [];
+    }
+
+    const html = await response.body.text();
+    if (html.includes('anomaly.js') || html.includes('cc=botnet')) return [];
+
+    const dom = new JSDOM(html);
+    const doc = dom.window.document;
+    const anchors = [...doc.querySelectorAll('.result__a')];
+    const items = [];
+
+    for (const a of anchors) {
+      const rawHref = a.getAttribute('href') || '';
+      if (!rawHref) continue;
+      let resolvedUrl = rawHref;
+      try {
+        const wrapperUrl = new URL(rawHref, DUCKDUCKGO_HTML_ENDPOINT);
+        const uddg = wrapperUrl.searchParams.get('uddg');
+        resolvedUrl = uddg || wrapperUrl.toString();
+      } catch (_) {
+        continue;
+      }
+      if (!resolvedUrl || resolvedUrl.includes('duckduckgo.com')) continue;
+      const resultBlock = a.closest('.result, .results_links, .web-result') || a.parentElement?.parentElement;
+      const snippetEl = resultBlock ? resultBlock.querySelector('.result__snippet') : null;
+      const candidate = {
+        url: resolvedUrl,
+        title: String(a.textContent || '').trim(),
+        description: String(snippetEl?.textContent || '').trim()
+      };
+      if (!candidate.title || isLowSignalResult(candidate)) continue;
+      items.push(candidate);
+      if (items.length >= count) break;
+    }
+    return items;
+  } catch (_) {
+    return [];
+  }
+}
+
+/**
+ * Coleta rápida de notícias e artigos web via Google News RSS oficial (`https://news.google.com/rss/search`),
+ * que responde em ~250ms com HTTP 200 sem CAPTCHA/429 e expõe `<title>`, `<description>` e `<source url="...">`.
+ */
+async function fetchGoogleNewsRssWeb(queryText, {
+  httpRequest = request,
+  timeoutMs = 3500,
+  count = 6,
+  hl = 'pt-BR',
+  gl = 'BR',
+  ceid = 'BR:pt-419'
+} = {}) {
+  if (httpRequest !== request) return [];
+  const cleanQ = String(queryText || '').trim();
+  if (!cleanQ || cleanQ.length < 2) return [];
+
+  try {
+    const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(cleanQ)}&hl=${encodeURIComponent(hl)}&gl=${encodeURIComponent(gl)}&ceid=${encodeURIComponent(ceid)}`;
+    const res = await httpRequest(rssUrl, {
+      method: 'GET',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36',
+        'Accept': 'application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8'
+      },
+      headersTimeout: timeoutMs,
+      bodyTimeout: timeoutMs
+    });
+    if (res.statusCode !== 200) {
+      if (res.body && typeof res.body.dump === 'function') {
+        await res.body.dump().catch(() => {});
+      }
+      return [];
+    }
+
+    const xml = await res.body.text();
+    const dom = new JSDOM(xml, { contentType: 'text/xml' });
+    const itemNodes = [...dom.window.document.querySelectorAll('item')];
+    const parsedItems = [];
+    const queryWords = cleanQ
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .split(/\s+/)
+      .filter((w) => w.length >= 4 && !/^(mundo|world|tocou|played|site|para|como|sobre)$/i.test(w));
+
+    for (const node of itemNodes.slice(0, 45)) {
+      const rawTitle = String(node.querySelector('title')?.textContent || '').replace(/\s+/g, ' ').trim();
+      const rawLink = String(node.querySelector('link')?.textContent || '').trim();
+      const rawDescHtml = String(node.querySelector('description')?.textContent || '');
+      const cleanDesc = rawDescHtml
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/&nbsp;/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const sourceEl = node.querySelector('source');
+      const sourceUrl = String(sourceEl?.getAttribute('url') || '').trim();
+      const sourceName = String(sourceEl?.textContent || '').trim();
+      if (!rawTitle || !rawLink) continue;
+
+      const candidate = {
+        url: rawLink,
+        sourceUrl: sourceUrl || rawLink,
+        title: rawTitle,
+        description: cleanDesc.length >= 40 ? cleanDesc : `${rawTitle}${sourceName ? ` (${sourceName})` : ''}`
+      };
+      if (isLowSignalResult({ url: candidate.sourceUrl, title: candidate.title, description: candidate.description })) {
+        continue;
+      }
+      const normTitle = rawTitle
+        .replace(/[\u2010-\u2015\u2212]/g, '-')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '');
+      const hasCallsign = /\b[A-Z]{2,5}-\d{1,5}\b/.test(normTitle);
+      const lowerTitle = normTitle.toLowerCase();
+      const matchedQueryWords = queryWords.filter((w) => lowerTitle.includes(w)).length;
+      const relevanceScore = (hasCallsign ? 3 : 0) + matchedQueryWords * 2;
+      parsedItems.push({ candidate, relevanceScore, idx: parsedItems.length });
+    }
+
+    parsedItems.sort((a, b) => (b.relevanceScore - a.relevanceScore) || (a.idx - b.idx));
+    return parsedItems.slice(0, count).map((x) => x.candidate);
+  } catch (_) {
+    return [];
+  }
+}
+
+/**
+ * Resolve apelidos coloquiais, siglas e entidades canônicas usando o SERP Web + Grafo Interlínguas da Wikipedia (`langlinks` + `description`).
+ * Exemplo real:
+ * - Usuário pesquisa `"Radio do fim do mundo tocou na russia"` ou `"UVB‑76"`.
+ * - O SERP / Google News RSS menciona `UVB-76` nos títulos/snippets.
+ * - O grafo `langlinks` da Wikipedia resolve automaticamente:
+ *   `en: UVB-76`, `ru: УВБ-76`, `de: The Buzzer`, `ja: UVB-76`, `ko: UVB-76`, `zh: UVB-76`, `pt: UVB-76`
+ *   e `description: Soviet and Russian shortwave radio station`, eliminando falsos positivos (ex.: radiação UVB em pele de ratos).
+ */
+async function resolveCanonicalEntityFromWebAndWiki(rawQuery, poles, webItems = [], {
+  httpRequest = request,
+  timeoutMs = 3500
+} = {}) {
+  if (httpRequest !== request) return poles;
+  const normalizedRaw = String(rawQuery || '')
+    .replace(/[\u2010\u2011\u2012\u2013\u2014\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-')
+    .trim();
+
+  // 1. Detecta indicativo/código técnico explícito na query ou dominante no SERP (ex.: UVB-76)
+  const IGNORED_CODE_PREFIXES = /^(UTF|ISO|COVID|SARS|HTTP|GPT|GLM|QWEN|LLAMA|PHI|GEMMA|CLAUDE|MISTRAL|DEEPSEEK|BERT|YOLO|SHA|AES|RSA|TLS|SSL|IPV|CVE|WIN|MAC|IOS|JDK|PHP|CSS|SQL|API|SDK)-\d+$/i;
+  const explicitCallsignMatch = normalizedRaw.match(/\b([A-Za-z]{2,5}-\d{1,5})\b/);
+  let detectedCallsign = explicitCallsignMatch ? explicitCallsignMatch[1].toUpperCase() : '';
+
+  if (!detectedCallsign && Array.isArray(webItems) && webItems.length > 0) {
+    const codeScores = new Map();
+    const codeItemCount = new Map();
+    for (const item of webItems) {
+      const titleNorm = String(item.title || '').replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-');
+      const descNorm = String(item.description || '').replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-');
+      const titleCodes = new Set([...titleNorm.matchAll(/\b([A-Z]{2,5}-\d{1,5})\b/g)].map((m) => m[1].toUpperCase()));
+      const descCodes = new Set([...descNorm.matchAll(/\b([A-Z]{2,5}-\d{1,5})\b/g)].map((m) => m[1].toUpperCase()));
+      const allItemCodes = new Set([...titleCodes, ...descCodes]);
+      for (const code of allItemCodes) {
+        if (IGNORED_CODE_PREFIXES.test(code)) continue;
+        // Aparição explícita no headline (<title>) vale peso 2; no snippet vale peso 1
+        const weight = titleCodes.has(code) ? 2 : 1;
+        codeScores.set(code, (codeScores.get(code) || 0) + weight);
+        codeItemCount.set(code, (codeItemCount.get(code) || 0) + 1);
+      }
+    }
+    let bestCode = '';
+    let bestScore = 0;
+    for (const [code, score] of codeScores.entries()) {
+      if (score > bestScore) {
+        bestScore = score;
+        bestCode = code;
+      }
+    }
+    if (bestCode && bestScore >= 2 && (codeItemCount.get(bestCode) >= 2 || /\b(r[áa]dio|esta[çc][ãa]o|station|sinal|signal|buzzer|doomsday|apocalipse|ju[íi]zo\s+final|fim\s+do\s+mundo|russia|r[úu]ssia)\b/i.test(normalizedRaw))) {
+      detectedCallsign = bestCode;
+    }
+  }
+
+  // 2. Se encontramos um indicativo canônico (ex.: UVB-76) na query ou nos snippets do SERP, consulta o grafo interlínguas da Wikipedia
+  if (detectedCallsign) {
+    const cacheKey = `callsign::${detectedCallsign}`;
+    let wikiEntity = canonicalEntityCache.get(cacheKey);
+    if (!wikiEntity) {
+      try {
+        const apiUrl = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(detectedCallsign)}&prop=langlinks|description&lllimit=50&redirects=1&format=json`;
+        const res = await httpRequest(apiUrl, {
+          method: 'GET',
+          headers: {
+            'User-Agent': 'DeepEvil/1.0 (Global Research Engine)',
+            'Accept': 'application/json'
+          },
+          headersTimeout: timeoutMs,
+          bodyTimeout: timeoutMs
+        });
+        if (res.statusCode === 200) {
+          const data = await res.body.json();
+          const pages = data?.query?.pages || {};
+          const page = Object.values(pages)[0];
+          if (page && page.pageid && !('missing' in page)) {
+            const langMap = {};
+            for (const ll of page.langlinks || []) {
+              if (ll?.lang && ll?.['*']) {
+                langMap[ll.lang] = ll['*'];
+              }
+            }
+            wikiEntity = {
+              enTitle: page.title || detectedCallsign,
+              description: String(page.description || '').trim(),
+              langMap
+            };
+            if (canonicalEntityCache.size > 200) canonicalEntityCache.clear();
+            canonicalEntityCache.set(cacheKey, wikiEntity);
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (wikiEntity) {
+      const { enTitle, description, langMap } = wikiEntity;
+      poles.usWiki = enTitle;
+      poles.cnWiki = langMap.zh || enTitle;
+      poles.deWiki = langMap.de || enTitle;
+      poles.jpWiki = langMap.ja || enTitle;
+      poles.krWiki = langMap.ko || enTitle;
+      poles.ruWiki = langMap.ru || enTitle;
+      poles.brWiki = langMap.pt || enTitle;
+
+      // Mantém `poles.us` enxuto (`enTitle`) para que o Bing HTML retorne sites diretos (ex.: priyom.org, uvb-76.ru) sem truncar na 1ª palavra
+      poles.us = enTitle;
+      poles.enCore = description ? `${enTitle} ${description}` : enTitle;
+      poles.academicCore = description ? `${enTitle} ${description}` : enTitle;
+      if (langMap.ru) {
+        poles.ru = `${langMap.ru} ${enTitle}`;
+      }
+      if (langMap.de) {
+        poles.de = `${langMap.de} ${enTitle}`;
+      }
+      return poles;
+    }
+  }
+
+  return poles;
+}
+
+/**
+ * Classifica e distribui resultados orgânicos da Web (DuckDuckGo / Bing / Google News RSS / SearXNG) nos 7 polos geopolíticos
+ * com base em TLD, domínio e alfabeto, garantindo que fontes web reais (ex.: `priyom.org`, `uvb-76.ru`,
+ * `presenc.ai`, `restofworld.org`, `zhihu.com`) ocupem o topo dos polos.
+ */
+function routeOrganicWebResultsToPoles(webItems = [], rawQuery = '', includeBrPole = true) {
+  const buckets = {
+    usWeb: [],
+    cnWeb: [],
+    deWeb: [],
+    jpWeb: [],
+    krWeb: [],
+    ruWeb: [],
+    brWeb: []
+  };
+  const seenUrls = new Set();
+
+  for (const item of webItems) {
+    if (!item || !item.url) continue;
+    const effectiveDomainUrl = String(item.sourceUrl || item.url).trim();
+    if (isLowSignalResult({ ...item, url: effectiveDomainUrl })) continue;
+    const normUrl = String(item.url).trim();
+    if (!normUrl || seenUrls.has(normUrl)) continue;
+
+    let hostname = '';
+    try {
+      hostname = new URL(effectiveDomainUrl).hostname.toLowerCase();
+    } catch (_) {
+      continue;
+    }
+    // Wikipedia já é consultada nativamente em cada idioma via searchWikipediaByLang
+    if (hostname.endsWith('wikipedia.org')) continue;
+
+    seenUrls.add(normUrl);
+    const text = `${item.title || ''} ${item.description || ''}`;
+    const cleanTitle = String(item.title || '').replace(/^\[(?:🇺🇸|🇨🇳|🇩🇪|🇯🇵|🇰🇷|🇷🇺|🇧🇷|🌍)[^\]]+\]\s*/, '').trim();
+    const rawDesc = String(item.description || '').trim();
+    const enrichedDesc = rawDesc.length >= 110
+      ? rawDesc
+      : `${cleanTitle} (${hostname}) — ${rawDesc || 'Verified web reference and primary domain source for global research.'} [Source: ${effectiveDomainUrl}]`;
+    const baseItem = { ...item, description: enrichedDesc };
+    const probeItem = { ...baseItem, url: effectiveDomainUrl };
+
+    if (
+      hostname.endsWith('.cn') ||
+      hostname.endsWith('.hk') ||
+      hostname.includes('zhihu.com') ||
+      hostname.includes('modelscope.') ||
+      hostname.includes('gitee.com') ||
+      hostname.includes('csdn.net') ||
+      hostname.includes('baidu.com') ||
+      /[\u4e00-\u9fff]/.test(text)
+    ) {
+      buckets.cnWeb.push({
+        ...baseItem,
+        title: `[🇨🇳 CN] ${cleanTitle}`,
+        countryPole: 'CN'
+      });
+    } else if (
+      hostname.endsWith('.ru') ||
+      hostname.endsWith('.su') ||
+      hostname.includes('habr.com') ||
+      hostname.includes('cyberleninka.ru') ||
+      /[\u0400-\u04ff]/.test(text)
+    ) {
+      buckets.ruWeb.push({
+        ...baseItem,
+        title: `[🇷🇺 RU] ${cleanTitle}`,
+        countryPole: 'RU'
+      });
+    } else if (hostname.endsWith('.de')) {
+      buckets.deWeb.push({
+        ...baseItem,
+        title: `[🇩🇪 DE] ${cleanTitle}`,
+        countryPole: 'DE'
+      });
+    } else if (hostname.endsWith('.jp') || /[\u3040-\u30ff]/.test(text)) {
+      buckets.jpWeb.push({
+        ...baseItem,
+        title: `[🇯🇵 JP] ${cleanTitle}`,
+        countryPole: 'JP'
+      });
+    } else if (hostname.endsWith('.kr') || /[\uac00-\ud7af]/.test(text)) {
+      buckets.krWeb.push({
+        ...baseItem,
+        title: `[🇰🇷 KR] ${cleanTitle}`,
+        countryPole: 'KR'
+      });
+    } else if (isPortugueseOrBrazilianBubbleResult(probeItem, rawQuery, true)) {
+      if (includeBrPole) {
+        buckets.brWeb.push({
+          ...baseItem,
+          title: `[🇧🇷 BR] ${cleanTitle}`,
+          countryPole: 'BR'
+        });
+      }
+    } else {
+      buckets.usWeb.push({
+        ...baseItem,
+        title: `[🇺🇸 US] ${cleanTitle}`,
+        countryPole: 'US'
+      });
+    }
+  }
+
+  return buckets;
+}
 
 /**
  * Traduz dinamicamente uma consulta para os idiomas dos polos (`en`, `zh-CN`, `de`, `ja`, `ko`, `ru`)
@@ -2072,6 +2578,64 @@ async function collectMultiPolarFederation(query, {
     query,
     { httpRequest, timeoutMs: 2500 }
   );
+
+  // Fase 0: Coleta Web Orgânica (DuckDuckGo + Google News RSS na língua original e em Inglês) e Grounding de Entidades (ex.: "Radio do fim do mundo" -> UVB-76 / УВБ-76 / The Buzzer)
+  let organicSeedResults = Array.isArray(extraRawResults) ? [...extraRawResults] : [];
+  if (httpRequest === request) {
+    const rawTrimmed = String(query || '').trim();
+    const enTrimmed = String(poles.enCore || '').trim();
+    const [ddgNative, ddgEn, gnewsPt, gnewsEn] = await Promise.all([
+      fetchQuickDuckDuckGoWeb(rawTrimmed, {
+        httpRequest,
+        timeoutMs: 3400,
+        count: 6,
+        kl: effectiveScope === 'brazil' ? 'br-pt' : 'wt-wt'
+      }),
+      enTrimmed && enTrimmed.toLowerCase() !== rawTrimmed.toLowerCase()
+        ? fetchQuickDuckDuckGoWeb(enTrimmed, { httpRequest, timeoutMs: 3400, count: 6, kl: 'wt-wt' })
+        : Promise.resolve([]),
+      fetchGoogleNewsRssWeb(rawTrimmed, {
+        httpRequest,
+        timeoutMs: 3200,
+        count: 5,
+        hl: 'pt-BR',
+        gl: 'BR',
+        ceid: 'BR:pt-419'
+      }),
+      fetchGoogleNewsRssWeb(enTrimmed || rawTrimmed, {
+        httpRequest,
+        timeoutMs: 3200,
+        count: 5,
+        hl: 'en-US',
+        gl: 'US',
+        ceid: 'US:en'
+      })
+    ]);
+    const combinedSeeds = [...ddgEn, ...ddgNative, ...gnewsPt, ...gnewsEn, ...organicSeedResults];
+    await resolveCanonicalEntityFromWebAndWiki(query, poles, combinedSeeds, {
+      httpRequest,
+      timeoutMs: 3200
+    });
+    // Filtra itens de RSS que bateram apenas em palavras genéricas (ex.: "sem fim" sem "rádio" ou sem o callsign resolvido)
+    const anchorTokens = `${rawTrimmed} ${poles.us || ''} ${poles.usWiki || ''}`
+      .toLowerCase()
+      .replace(/[\u2010-\u2015\u2212]/g, '-')
+      .split(/\s+/)
+      .filter((t) => t.length >= 4 && !/^(mundo|world|fim|end|tocou|played|broadcast|russia|rússia|russian|soviet|station|shortwave|site|website|concorrente|alternative|competitor|china|chinese)$/i.test(t));
+    organicSeedResults = combinedSeeds.filter((item) => {
+      if (anchorTokens.length === 0) return true;
+      const hay = `${item.title || ''} ${item.description || ''}`
+        .toLowerCase()
+        .replace(/[\u2010-\u2015\u2212]/g, '-')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '');
+      return anchorTokens.some((tok) => {
+        const normTok = tok.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        return hay.includes(normTok);
+      });
+    });
+  }
+
   const wantsGitHub = /https?:\/\/|\.git\b|\b(github|reposit[óo]rios?|open[-\s]?source|c[óo]digo[-\s]?aberto)\b/i.test(query);
   const isSoftwareDomain = poles.domain === 'software_cs' || wantsGitHub;
   const isExactOrSoftware = isSoftwareDomain || poles.domain === 'exact_sciences';
@@ -2097,8 +2661,8 @@ async function collectMultiPolarFederation(query, {
       searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 4500, count: 4, countryCode: 'BR', countryPole: 'BR', countryBadge: '[🇧🇷 BR]' }),
       searchBingHtml(poles.br, { httpRequest, timeoutMs: 4500, count: 4, searchScope: 'brazil' })
     ]);
-    const brExtra = (extraRawResults || []).filter((item) => !isLowSignalResult(item));
-    const brPool = interleaveArrays(brWiki, brOpenAlex, [...brBing, ...brExtra]).slice(0, 12);
+    const brExtra = organicSeedResults.filter((item) => !isLowSignalResult(item));
+    const brPool = interleaveArrays([...brExtra, ...brBing], brWiki, brOpenAlex).slice(0, 12);
 
     return selectMultiPolarTopResults(
       {
@@ -2185,48 +2749,65 @@ async function collectMultiPolarFederation(query, {
       : Promise.resolve([])
   ]);
 
-  const cleanExtra = (extraRawResults || []).filter((item) => !isPortugueseOrBrazilianBubbleResult(item, query, true));
-  const brExtra = includeBrPole
-    ? [...(extraRawResults || []), ...(usBing || [])].filter((item) => isPortugueseOrBrazilianBubbleResult(item, query, true) && !isLowSignalResult(item))
-    : [];
+  const {
+    usWeb,
+    cnWeb,
+    deWeb,
+    jpWeb,
+    krWeb,
+    ruWeb,
+    brWeb
+  } = routeOrganicWebResultsToPoles([...organicSeedResults, ...(usBing || [])], query, includeBrPole);
 
-  // Intercala dentro de cada polo respeitando o domínio (Enciclopédia + Paper Acadêmico do País + Web/Engenharia)
+  // Intercala dentro de cada polo priorizando Web Orgânica + Enciclopédia Canônica + Paper Acadêmico do País
   const usPool = interleaveArrays(
+    usWeb,
     usWiki,
     usOpenAlex,
-    [...cleanExtra, ...usBing, ...usHn, ...usArxiv]
+    [...usHn, ...usArxiv]
   ).slice(0, 6);
 
+  const cnGitHubBadged = (cnGitHub || []).map((item) => ({
+    ...item,
+    title: String(item.title || '').startsWith('[') ? item.title : `[🇨🇳 CN] ${item.title}`,
+    countryPole: 'CN'
+  }));
+
   const cnPool = interleaveArrays(
+    cnWeb.length > 0 ? cnWeb : (cnGitHubBadged.length > 0 ? cnGitHubBadged : cnWiki),
+    cnGitHubBadged.length > 0 ? cnGitHubBadged : cnWiki,
     cnWiki,
-    cnOpenAlex,
-    wantsGitHub ? [] : cnGitHub
+    cnOpenAlex
   ).slice(0, 5);
 
   const dePool = interleaveArrays(
-    deWiki,
+    deWeb.length > 0 ? deWeb : deWiki,
+    deWeb.length > 0 ? deWiki : deOpenAlex,
     deOpenAlex
   ).slice(0, 5);
 
   const jpPool = interleaveArrays(
-    jpWiki,
+    jpWeb.length > 0 ? jpWeb : jpWiki,
+    jpWeb.length > 0 ? jpWiki : jpOpenAlex,
     jpOpenAlex
   ).slice(0, 5);
 
   const krPool = interleaveArrays(
-    krWiki,
+    krWeb.length > 0 ? krWeb : krWiki,
+    krWeb.length > 0 ? krWiki : krOpenAlex,
     krOpenAlex
   ).slice(0, 5);
 
   const ruPool = interleaveArrays(
-    isSoftwareDomain ? ruHabr : ruYandex,
-    isSoftwareDomain ? ruYandex : ruWiki,
+    isSoftwareDomain ? ruHabr : (ruYandex.length > 0 ? ruYandex : ruWeb),
+    ruWiki,
+    ruWeb,
     ruOpenAlex,
-    isSoftwareDomain ? ruWiki : []
+    isSoftwareDomain ? ruYandex : []
   ).slice(0, 5);
 
   const brPool = includeBrPole
-    ? interleaveArrays(brWiki, brOpenAlex, brExtra).slice(0, 5)
+    ? interleaveArrays(brWeb, brWiki, brOpenAlex).slice(0, 5)
     : [];
 
   return selectMultiPolarTopResults(
@@ -2239,7 +2820,7 @@ async function collectMultiPolarFederation(query, {
       krPool,
       ruPool,
       brPool,
-      globalPool: [...cnGitHub, ...usArxiv]
+      globalPool: [...usWeb.slice(1), ...cnWeb.slice(1), ...ruWeb.slice(1), ...brWeb.slice(1), ...cnGitHub, ...usArxiv]
     },
     totalCount,
     query,
@@ -2571,15 +3152,16 @@ async function searchBingHtml(query, { httpRequest = request, timeoutMs = 8000, 
       const title = String(a.textContent || '').trim();
       const description = String(snippetEl?.textContent || '').trim();
 
-      // Anti-Honeypot Filter: descarta páginas aleatórias injetadas pelo anti-bot do Bing (ex.: "Santa Catarina", "Summer Place")
+      // Anti-Honeypot & First-Word Truncation Filter: descarta páginas injetadas pelo Bing quando ele trunca queries multi-palavra na 1ª palavra (ex.: "End" -> endclothing.com, "site" -> Google Sites)
       if (isRealNetworkCall && subjectTokens.length > 0) {
-        const hay = `${title} ${description}`.toLowerCase();
-        const matchesSubject = subjectTokens.some((tok) => {
+        const hay = `${title} ${description}`.replace(/[\u2010-\u2015\u2212]/g, '-').toLowerCase();
+        const matchedTokens = subjectTokens.filter((tok) => {
           if (tok.length >= 4) return hay.includes(tok);
           const escaped = tok.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           return new RegExp(`\\b${escaped}\\b`, 'i').test(hay);
         });
-        if (!matchesSubject) continue;
+        const requiredMatchCount = subjectTokens.length >= 2 ? 2 : 1;
+        if (matchedTokens.length < requiredMatchCount) continue;
       }
 
       candidates.push({
