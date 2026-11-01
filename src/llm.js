@@ -202,12 +202,22 @@ async function listOllamaModels({ env = process.env, requestFn = request } = {})
       return [{ name: defaultModel, sizeGb: null, provider: 'ollama' }];
     }
 
-    // Garante que o defaultModel ou eriktonon/granite4.2-uncensored apareça primeiro se estiver na lista
+    const priorityOrder = [
+      defaultModel,
+      'eriktonon/deepseek-v4.1-flash-1017:9b',
+      'eriktonon/qwen3.8-uncensored:9b',
+      'eriktonon/granite4.2-uncensored:8b',
+      'eriktonon/granite4.2-uncensored:latest',
+      'granite4.2-uncensored:latest'
+    ];
+
+    // Ordena os modelos priorizando o campeão empírico de síntese local (deepseek-v4.1-flash-1017:9b / qwen3.8-uncensored:9b / granite4.2-uncensored:8b)
     filtered.sort((a, b) => {
-      if (a.name === defaultModel) return -1;
-      if (b.name === defaultModel) return 1;
-      if (a.name === 'eriktonon/granite4.2-uncensored:latest') return -1;
-      if (b.name === 'eriktonon/granite4.2-uncensored:latest') return 1;
+      const idxA = priorityOrder.indexOf(a.name);
+      const idxB = priorityOrder.indexOf(b.name);
+      if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+      if (idxA !== -1) return -1;
+      if (idxB !== -1) return 1;
       return a.name.localeCompare(b.name);
     });
 
@@ -339,6 +349,8 @@ function buildConversationMessages(priorTurns = [], currentQuestion = '', curren
  */
 function sanitizeCitations(markdownText, maxCitationIndex) {
   let text = String(markdownText || '')
+    .replace(/<think>[\s\S]*?<\/think>\s*/gi, '')
+    .replace(/<think>[\s\S]*$/gi, '')
     .replace(/\bConcórvora\b/gi, 'Concorrência')
     .replace(/\bconcórvora\b/g, 'concorrência')
     .replace(/\bMotorres\b/g, 'Motores')
@@ -550,19 +562,24 @@ async function streamFromOllama({ baseUrl, model, numCtx, systemPrompt, messages
     try {
       let response = await sendWithAutoWake();
 
-      // Fallback transparente entre o alias local (granite4.2-uncensored:latest) e o namespace público no Ollama Hub (eriktonon/granite4.2-uncensored:latest)
-      if (response.statusCode === 404 && (model === 'granite4.2-uncensored:latest' || model === 'eriktonon/granite4.2-uncensored:latest')) {
-        if (response.body && typeof response.body.dump === 'function') {
-          await response.body.dump().catch(() => {});
+      // Fallback transparente entre aliases locais (:latest / :8b) e o campeão local instalado no Ollama
+      if (response.statusCode === 404 && /granite4\.2-uncensored/i.test(model)) {
+        const fallbackCandidates = [
+          model === 'granite4.2-uncensored:latest' ? 'eriktonon/granite4.2-uncensored:latest' : 'granite4.2-uncensored:latest',
+          'eriktonon/granite4.2-uncensored:8b',
+          'eriktonon/deepseek-v4.1-flash-1017:9b'
+        ];
+        for (const altModel of fallbackCandidates) {
+          if (response.statusCode !== 404) break;
+          if (response.body && typeof response.body.dump === 'function') {
+            await response.body.dump().catch(() => {});
+          }
+          reqOpts.body = JSON.stringify({
+            ...JSON.parse(reqOpts.body),
+            model: altModel
+          });
+          response = await sendWithAutoWake();
         }
-        const altModel = model === 'granite4.2-uncensored:latest'
-          ? 'eriktonon/granite4.2-uncensored:latest'
-          : 'granite4.2-uncensored:latest';
-        reqOpts.body = JSON.stringify({
-          ...JSON.parse(reqOpts.body),
-          model: altModel
-        });
-        response = await sendWithAutoWake();
       }
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
