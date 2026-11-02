@@ -389,6 +389,11 @@ const PT_TO_GLOBAL_TERMS = [
   [/\btocou\b/gi, 'broadcast'],
   [/\bconcorrente(?:s)?\b/gi, 'alternative competitor'],
   [/\b(?:site|plataforma|portal)\s+d[eo]\b/gi, 'platform'],
+  // Segurança Alimentar, Estoque Estratégico de Alimentos & Preparação Civil
+  [/\b(?:estocar|armazenar|reservar|estocagem\s+de|estoque\s+de|reserva(?:s)?\s+(?:estrat[ée]gica(?:s)?\s+de\s+)?)\s*alimento(?:s)?\b/gi, 'strategic food reserves emergency food stockpiling food storage security'],
+  [/\bseguran[çc]a\s+alimentar\b/gi, 'food security strategic grain reserves'],
+  [/\bconserva[çc][ãa]o\s+de\s+alimento(?:s)?\b/gi, 'food preservation shelf life storage'],
+  [/\bsobrevivencialismo|\bprepper(?:s)?\b/gi, 'emergency preparedness survival food storage'],
   [/\bbrasil\b/gi, 'Brazil'],
   [/\bbrasileir[oa]s?\b/gi, 'Brazilian'],
   [/\bhist[óo]ria\b/gi, 'history'],
@@ -725,6 +730,24 @@ function buildMultiPolarQueries(rawQuery, focusMode = 'web') {
     jpTerms.push('化学合成', '熱力学', '反応機構');
     krTerms.push('화학 합성', '열역학', '반응 메커니즘');
     ruTerms.push('химический синтез', 'термодинамика', 'состав', 'химия');
+  }
+  if (/\b(estocar\s+alimento\w*|estoque\s+de\s+alimento\w*|armazenar\s+alimento\w*|strategic\s+food\s+reserves?|emergency\s+food\s+stockpil\w*|food\s+storage|seguran[çc]a\s+alimentar|food\s+security)\b/i.test(`${rawQuery} ${lower}`)) {
+    usQuery = 'strategic food reserves emergency food stockpiling grain reserve food security 2026';
+    academicCore = 'strategic grain reserves food security emergency food storage supply chain resilience';
+    usWikiCustom = 'Strategic grain reserve';
+    enCoreCustom = 'strategic food reserves emergency food stockpiling food security 2026';
+    cnTerms.push('国家粮食储备', '粮食安全', '应急物资储备', '中储粮');
+    deTerms.push('Ernährungsvorsorge', 'Notvorrat', 'Zivile Notfallreserve', 'Bundesreserve Getreide');
+    jpTerms.push('食料安全保障', '備蓄', 'ローリングストック', '災害用備蓄食料');
+    krTerms.push('식량안보', '비상식량', '정부양곡', '식량비축');
+    ruTerms.push('Продовольственная безопасность', 'Росрезерв', 'государственный материальный резерв', 'запасы продовольствия');
+    cnWikiCustom = '粮食安全';
+    deWikiCustom = 'Zivile Notfallreserve';
+    jpWikiCustom = '備蓄';
+    krWikiCustom = '식량안보';
+    ruWikiCustom = 'Продовольственная безопасность';
+    brQuery = 'estocar alimentos reserva estratégica de alimentos segurança alimentar CONAB conservação de alimentos 2026';
+    brWiki = 'Segurança alimentar';
   }
 
   const coreTokens = enBase
@@ -2082,6 +2105,7 @@ function selectMultiPolarTopResults({
 
 const queryPoleTranslationCache = new Map();
 const canonicalEntityCache = new Map();
+let gtxRateLimitedUntil = 0;
 
 /**
  * Executa uma busca rápida no DuckDuckGo HTML (orgânica) para alimentar o Grounding de Entidades
@@ -2489,32 +2513,69 @@ async function enrichMultiPolarQueriesWithTranslation(poles, rawQuery, { httpReq
     if (queryPoleTranslationCache.has(cacheKey)) {
       return queryPoleTranslationCache.get(cacheKey);
     }
+    if (Date.now() >= gtxRateLimitedUntil) {
+      try {
+        const gtxUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(tl)}&dt=t&q=${encodeURIComponent(baseText)}`;
+        const res = await httpRequest(gtxUrl, {
+          method: 'GET',
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/131.0.0.0 Safari/537.36',
+            'Accept': 'application/json'
+          },
+          headersTimeout: timeoutMs,
+          bodyTimeout: timeoutMs
+        });
+        if (res.statusCode === 200) {
+          const payload = await res.body.json();
+          if (Array.isArray(payload?.[0])) {
+            const joined = payload[0]
+              .map((seg) => (Array.isArray(seg) && typeof seg[0] === 'string' ? seg[0] : ''))
+              .join('')
+              .replace(/[?!.]+$/g, '')
+              .replace(/\s+/g, ' ')
+              .trim();
+            if (joined) {
+              if (queryPoleTranslationCache.size > 300) queryPoleTranslationCache.clear();
+              queryPoleTranslationCache.set(cacheKey, joined);
+              return joined;
+            }
+          }
+        } else {
+          if (res.statusCode === 429 || res.statusCode === 403) {
+            gtxRateLimitedUntil = Date.now() + 180_000;
+          }
+          if (res.body && typeof res.body.dump === 'function') {
+            await res.body.dump().catch(() => {});
+          }
+        }
+      } catch (_) {}
+    }
+
+    // Fallback sem CAPTCHA via MyMemory Translation API quando Google gtx retorna HTTP 429
     try {
-      const gtxUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(tl)}&dt=t&q=${encodeURIComponent(baseText)}`;
-      const res = await httpRequest(gtxUrl, {
+      const mmUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(baseText)}&langpair=${encodeURIComponent(`pt|${tl}`)}`;
+      const mmRes = await httpRequest(mmUrl, {
         method: 'GET',
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/131.0.0.0 Safari/537.36',
+          'User-Agent': 'DeepEvil/1.0 (Global Research Engine)',
           'Accept': 'application/json'
         },
         headersTimeout: timeoutMs,
         bodyTimeout: timeoutMs
       });
-      if (res.statusCode === 200) {
-        const payload = await res.body.json();
-        if (Array.isArray(payload?.[0])) {
-          const joined = payload[0]
-            .map((seg) => (Array.isArray(seg) && typeof seg[0] === 'string' ? seg[0] : ''))
-            .join('')
-            .replace(/[?!.]+$/g, '')
-            .replace(/\s+/g, ' ')
-            .trim();
-          if (joined) {
-            if (queryPoleTranslationCache.size > 300) queryPoleTranslationCache.clear();
-            queryPoleTranslationCache.set(cacheKey, joined);
-            return joined;
-          }
+      if (mmRes.statusCode === 200) {
+        const mmData = await mmRes.body.json();
+        const trText = String(mmData?.responseData?.translatedText || '')
+          .replace(/[?!.]+$/g, '')
+          .replace(/\s+/g, ' ')
+          .trim();
+        if (trText && !/MYMEMORY WARNING|PLEASE SELECT TWO DISTINCT/i.test(trText)) {
+          if (queryPoleTranslationCache.size > 300) queryPoleTranslationCache.clear();
+          queryPoleTranslationCache.set(cacheKey, trText);
+          return trText;
         }
+      } else if (mmRes.body && typeof mmRes.body.dump === 'function') {
+        await mmRes.body.dump().catch(() => {});
       }
     } catch (_) {}
     return '';
@@ -2890,8 +2951,9 @@ async function localizeSourceHeadlines(sources = [], targetLang = 'pt-BR', {
     const cacheKey = `${sl}->${tl}::${coreSubject}`;
     let translatedCore = headlineTranslationCache.get(cacheKey);
 
-    if (!translatedCore) {
-      for (let attempt = 1; attempt <= 3; attempt++) {
+    if (!translatedCore && Date.now() >= gtxRateLimitedUntil) {
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        if (Date.now() < gtxRateLimitedUntil) break;
         try {
           const gtxUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${encodeURIComponent(sl)}&tl=${encodeURIComponent(tl)}&dt=t&q=${encodeURIComponent(coreSubject)}`;
           const res = await httpRequest(gtxUrl, {
@@ -2927,13 +2989,19 @@ async function localizeSourceHeadlines(sources = [], targetLang = 'pt-BR', {
                 break;
               }
             }
-          } else if (res.body && typeof res.body.dump === 'function') {
-            await res.body.dump().catch(() => {});
+          } else {
+            if (res.statusCode === 429 || res.statusCode === 403) {
+              gtxRateLimitedUntil = Date.now() + 180_000;
+            }
+            if (res.body && typeof res.body.dump === 'function') {
+              await res.body.dump().catch(() => {});
+            }
+            if (res.statusCode === 429 || res.statusCode === 403) break;
           }
         } catch (_) {
           // Aguarda breve backoff antes da próxima tentativa
         }
-        if (attempt < 3) {
+        if (attempt < 2) {
           await new Promise((r) => setTimeout(r, attempt * 180));
         }
       }
