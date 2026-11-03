@@ -189,14 +189,14 @@ function isPortugueseOrBrazilianBubbleResult(item, rawQuery = '', forceInternati
     host.startsWith('pt.') ||
     host.startsWith('br.') ||
     brMediaHosts.some((d) => host === d || host.endsWith(`.${d}`)) ||
-    /\/(pt|pt-br|pt_br|br|portuguese|brasil)(\/|$)/i.test(path) ||
+    /\/(pt|pt-br|pt_br|br|portuguese|portugues|brasil)(\/|$)/i.test(path) ||
     /-(pt|br)\b/i.test(path)
   ) {
     return true;
   }
 
   const text = `${item.title || ''} ${item.description || ''}`;
-  if (/\b(melhores\s+modelos|os\s+\d+\s+melhores|guia\s+completo|comparação\s+técnica|inteligências\s+artificiais|qual\s+a\s+melhor\s+ia|modelos\s+de\s+ia\s+mais)\b/i.test(text)) {
+  if (/\b(melhores\s+modelos|os\s+\d+\s+melhores|guia\s+completo|comparação\s+técnica|inteligências\s+artificiais|qual\s+a\s+melhor\s+ia|modelos\s+de\s+ia\s+mais|mapa\s+mundial\s+de\s+r[áa]dio|r[áa]dio\s+mundial,\s+ao\s+vivo)\b/i.test(text)) {
     return true;
   }
 
@@ -259,6 +259,9 @@ function isLowSignalResult(item) {
   }
   const text = `${item.title || ''} ${item.description || ''}`;
   if (/\b(os\s+\d+\s+melhores|descubra\s+qual\s+[eé]\s+a\s+melhor|veja\s+os\s+melhores)\b/i.test(text)) {
+    return true;
+  }
+  if (/^(worldradiomap\.com|universeradio\.app|aradio\.org|radiogarden\.live|mytuner-radio\.com|radios\.com\.br)$/.test(host)) {
     return true;
   }
   return false;
@@ -748,6 +751,27 @@ function buildMultiPolarQueries(rawQuery, focusMode = 'web') {
     ruWikiCustom = 'Продовольственная безопасность';
     brQuery = 'estocar alimentos reserva estratégica de alimentos segurança alimentar CONAB conservação de alimentos 2026';
     brWiki = 'Segurança alimentar';
+  }
+  if (
+    /\b(outr[oa]s?|other|al[ée]m\s+d[aeo]|semelhantes?|parecid[oa]s?|similar|like)\b/i.test(`${rawQuery} ${lower}`) &&
+    /(?:uvb-?76|увб-?76|buzzer|ju[íi]zo\s+final|fim\s+do\s+mundo|doomsday)/i.test(`${rawQuery} ${lower}`)
+  ) {
+    usQuery = 'Numbers station The Pip Squeaky Wheel HFGCS Skyking';
+    enCoreCustom = 'Numbers station The Pip Squeaky Wheel HFGCS Skyking';
+    academicCore = 'shortwave numbers station military HF communication';
+    usWikiCustom = 'High Frequency Global Communications System';
+    cnTerms.push('数字电台', '短波广播', '末日广播');
+    deTerms.push('Monolith-Netzwerk', 'Zahlensender', 'The Pip', 'Squeaky Wheel');
+    jpTerms.push('乱数放送', '短波放送', 'ザ・ピップ');
+    krTerms.push('난수방송', '단파방송');
+    ruTerms.push('Номерные радиостанции', 'Капля', 'Скрипучее колесо', 'УВБ-76');
+    cnWikiCustom = '数字电台';
+    deWikiCustom = 'Monolith-Netzwerk';
+    jpWikiCustom = '乱数放送';
+    krWikiCustom = '난수방송';
+    ruWikiCustom = 'Номерные радиостанции';
+    brQuery = 'Estação de números rádios militares ondas curtas The Pip Squeaky Wheel HFGCS';
+    brWiki = 'Estação de números';
   }
 
   const coreTokens = enBase
@@ -2285,6 +2309,31 @@ async function resolveCanonicalEntityFromWebAndWiki(rawQuery, poles, webItems = 
   const normalizedRaw = String(rawQuery || '')
     .replace(/[\u2010\u2011\u2012\u2013\u2014\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-')
     .trim();
+
+  // 0. Caso o usuário peça explicitamente OUTRAS estações de rádio do juízo final / números semelhantes à УВБ-76 / UVB-76
+  const isOtherStationsLikeUvb =
+    /\b(outr[oa]s?|other|al[ée]m\s+d[aeo]|semelhantes?|parecid[oa]s?|similar|like)\b/i.test(normalizedRaw) &&
+    /(?:uvb-?76|увб-?76|buzzer|ju[íi]zo\s+final|fim\s+do\s+mundo|doomsday)/i.test(normalizedRaw);
+
+  if (isOtherStationsLikeUvb) {
+    poles.us = 'Numbers station The Pip Squeaky Wheel HFGCS Skyking';
+    poles.usWiki = 'High Frequency Global Communications System';
+    poles.cn = '数字电台 短波广播 末日广播 The Pip';
+    poles.cnWiki = '数字电台';
+    poles.de = 'Monolith-Netzwerk Zahlensender The Pip Squeaky Wheel';
+    poles.deWiki = 'Monolith-Netzwerk';
+    poles.jp = '乱数放送 短波放送 ザ・ピップ';
+    poles.jpWiki = '乱数放送';
+    poles.kr = '난수방송 단파방송';
+    poles.krWiki = '난수방송';
+    poles.ru = 'Номерные радиостанции УВБ-76 Капля Скрипучее колесо';
+    poles.ruWiki = 'Номерные радиостанции';
+    poles.br = 'Estação de números rádios militares ondas curtas The Pip Squeaky Wheel HFGCS UVB-76';
+    poles.brWiki = 'Estação de números';
+    poles.enCore = 'Numbers station High Frequency Global Communications System The Pip Squeaky Wheel military shortwave';
+    poles.academicCore = 'shortwave numbers station military HF communication HF propagation';
+    return poles;
+  }
 
   // 1. Detecta indicativo/código técnico explícito na query ou dominante no SERP (ex.: UVB-76)
   const IGNORED_CODE_PREFIXES = /^(UTF|ISO|COVID|SARS|HTTP|GPT|GLM|QWEN|LLAMA|PHI|GEMMA|CLAUDE|MISTRAL|DEEPSEEK|BERT|YOLO|SHA|AES|RSA|TLS|SSL|IPV|CVE|WIN|MAC|IOS|JDK|PHP|CSS|SQL|API|SDK)-\d+$/i;
