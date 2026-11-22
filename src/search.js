@@ -5,1134 +5,166 @@ try {
   dns.setDefaultResultOrder('ipv4first');
 } catch (_) {}
 
-const { request, Agent, setGlobalDispatcher } = require('undici');
-const { JSDOM } = require('jsdom');
+const { request, Agent } = require('undici');
+const { parseHTML, DOMParser } = require('linkedom');
+const { createSafeHttpDispatcher } = require('./security');
 
-try {
-  setGlobalDispatcher(
-    new Agent({
-      connect: {
-        rejectUnauthorized: false,
-        timeout: 6500
-      }
-    })
-  );
-} catch (_) {}
+const {
+  MAX_RESULTS,
+  MULTI_POLAR_RESULTS_COUNT,
+  GLOBAL_ACCEPT_LANGUAGE,
+  LOW_SIGNAL_DOMAINS,
+  HIGH_SIGNAL_DOMAINS,
+  FOCUS_MODES,
+  SEARCH_SCOPES,
+  normalizeSearchScope,
+  SEARCH_LANGUAGES,
+  normalizeSearchLang,
+  normalizeHyphens,
+  isExplicitBrazilQuery,
+  isPortugueseOrBrazilianBubbleResult,
+  classifyQueryDomain,
+  isLowSignalResult,
+  toGlobalResearchQuery,
+  extractSubjectTokens,
+  planSearchIntent,
+  buildMultiPolarQueries,
+  applyFocusModeToQuery,
+  buildContextualSearchQuery
+} = require('./search/planner');
+
+const {
+  canonicalizeUrl,
+  extractWikipediaMeta,
+  deduplicateResults
+} = require('./search/dedup');
+
+const {
+  scoreResultCoherence,
+  normalizeTopResults,
+  rerankCandidates,
+  rerankCandidatesAsync,
+  selectMultiPolarTopResults,
+  selectMultiPolarTopResultsAsync
+} = require('./search/reranker');
+
+const {
+  DEFAULT_CACHE_TTL_MS,
+  TtlCache,
+  localizeSourceHeadlines,
+  enrichMultiPolarQueriesWithTranslation
+} = require('./search/translator');
 
 const BRAVE_ENDPOINT = 'https://api.search.brave.com/res/v1/web/search';
 const DEFAULT_SEARXNG_URL = 'http://127.0.0.1:8888';
 const DUCKDUCKGO_HTML_ENDPOINT = 'https://html.duckduckgo.com/html/';
 const BING_HTML_ENDPOINT = 'https://www.bing.com/search';
-const MAX_RESULTS = 6;
-const MULTI_POLAR_RESULTS_COUNT = 10;
-const GLOBAL_ACCEPT_LANGUAGE = 'en-US,en;q=0.9,*;q=0.8';
+const DEFAULT_SEARCH_DEADLINE_MS = 4200;
 
-/**
- * Domínios escolares rasos, dicionários ou portais de download/jogos que poluem pesquisas técnicas/científicas.
- */
-const LOW_SIGNAL_DOMAINS = [
-  'todamateria.com.br',
-  'brasilescola.uol.com.br',
-  'mundoeducacao.uol.com.br',
-  'escolakids.uol.com.br',
-  'preparaenem.com',
-  'manualdaquimica.com',
-  'biologianet.com',
-  'historiadomundo.com.br',
-  'portugues.com.br',
-  'dicio.com.br',
-  'significados.com.br',
-  'sinonimos.com.br',
-  'pensador.com',
-  'brainly.com.br',
-  'passeidireto.com',
-  'infoescola.com',
-  'resumoescolar.com.br',
-  'querobolsa.com.br',
-  'stoodi.com.br',
-  'descomplica.com.br',
-  'store.steampowered.com',
-  'softonic.com',
-  'en.softonic.com',
-  'minijogos.com.br',
-  'fandom.com',
-  'raft-game.com',
-  'uptodown.com',
-  'baixaki.com.br',
-  'jogos360.com.br',
-  'poki.com',
-  'nite.games'
-];
+// Dispatcher dedicado seguro para internet pública (TLS estrito rejectUnauthorized: true + proteção anti-SSRF)
+const safeExternalDispatcher = createSafeHttpDispatcher({
+  timeout: 5500,
+  headersTimeout: 4500,
+  bodyTimeout: 4500
+});
 
-/**
- * Domínios globais de alta autoridade científica, técnica e enciclopédica.
- */
-const HIGH_SIGNAL_DOMAINS = [
-  'en.wikipedia.org',
-  'zh.wikipedia.org',
-  'de.wikipedia.org',
-  'ja.wikipedia.org',
-  'ko.wikipedia.org',
-  'ru.wikipedia.org',
-  'pt.wikipedia.org',
-  'mpg.de',
-  'fraunhofer.de',
-  'dfki.de',
-  'bsi.bund.de',
-  'riken.jp',
-  'nii.ac.jp',
-  'u-tokyo.ac.jp',
-  'kaist.ac.kr',
-  'snu.ac.kr',
-  'etri.re.kr',
-  'scielo.br',
-  'palantir.com',
-  'arxiv.org',
-  'export.arxiv.org',
-  'openalex.org',
-  'doi.org',
-  'github.com',
-  'habr.com',
-  'mera.a-ai.ru',
-  'cyberleninka.ru',
-  'yandex.ru',
-  'yandex.com',
-  'opencompass.org.cn',
-  'modelscope.cn',
-  'zhihu.com',
-  'juejin.cn',
-  'oschina.net',
-  'lmarena.ai',
-  'swebench.com',
-  'livebench.ai',
-  'huggingface.co',
-  'kernel.org',
-  'lwn.net',
-  'nvd.nist.gov',
-  'cve.org',
-  'owasp.org',
-  'ietf.org',
-  'rfc-editor.org',
-  'ieee.org',
-  'acm.org',
-  'dl.acm.org',
-  'usenix.org',
-  'nature.com',
-  'sciencedirect.com',
-  'springer.com',
-  'ncbi.nlm.nih.gov',
-  'pmc.ncbi.nlm.nih.gov',
-  'pubchem.ncbi.nlm.nih.gov',
-  'britannica.com',
-  'cloudflare.com',
-  'mozilla.org',
-  'developer.mozilla.org',
-  'docs.rs',
-  'kubernetes.io',
-  'linuxfoundation.org',
-  'mitre.org',
-  'attack.mitre.org',
-  'cisa.gov',
-  'sans.org',
-  'portswigger.net',
-  'exploit-db.com',
-  'packetstormsecurity.com',
-  'elastic.co',
-  'iaea.org'
-];
-
-/**
- * Detecta se o usuário pediu explicitamente algo restrito ao contexto do Brasil.
- */
-function isExplicitBrazilQuery(rawQuery) {
-  const clean = String(rawQuery || '').trim();
-  return /\b(brasil|brasileir[oa]s?|stf|stj|receita\s+federal|ibge|anatel|bacen|banco\s+central\s+do\s+brasil|pix|cnpj|cpf|clt|inss|sus|enem|prefeitura|governo\s+federal|são\s+paulo|rio\s+de\s+janeiro|brasília|selic|ipca)\b/i.test(clean);
-}
-
-/**
- * Detecta se um candidato pertence à bolha geográfica de blogs/portais em português (`.br`, `.pt`, `/pt/`)
- * ou está redigido em português quando avaliado para um polo internacional (`forceInternationalCheck=true`).
- */
-function isPortugueseOrBrazilianBubbleResult(item, rawQuery = '', forceInternationalCheck = false) {
-  if (!item || !item.url) return false;
-  if (!forceInternationalCheck && isExplicitBrazilQuery(rawQuery)) return false;
-  let parsed;
-  try {
-    parsed = new URL(item.url);
-  } catch (_) {
-    return false;
+// Dispatcher dedicado para serviços confiáveis locais (ex.: SearXNG local em 127.0.0.1:8888) mantendo TLS estrito
+const localServiceDispatcher = new Agent({
+  connect: {
+    rejectUnauthorized: true,
+    timeout: 4500
   }
-  const host = parsed.hostname.replace(/^www\./i, '').toLowerCase();
-  const path = parsed.pathname.toLowerCase();
+});
 
-  // Exceção para domínios de teste unitário local (.org/.dev/.local de mocks)
-  if (/^(exemplo-\d+\.org|fonte\d+\.dev|docs\.searxng\.org|sqlite\.org|htmx\.org)$/.test(host)) {
-    return false;
-  }
+// Caches com TTL de 5 minutos e evicção LRU (sem .clear() brusco)
+const academicSearchCache = new TtlCache({ ttlMs: DEFAULT_CACHE_TTL_MS, maxEntries: 400 });
+const wikiSearchCache = new TtlCache({ ttlMs: DEFAULT_CACHE_TTL_MS, maxEntries: 400 });
+const canonicalEntityCache = new TtlCache({ ttlMs: DEFAULT_CACHE_TTL_MS, maxEntries: 250 });
 
-  const brMediaHosts = [
-    'brasil247.com',
-    'metropoles.com',
-    'globo.com',
-    'uol.com',
-    'r7.com',
-    'terra.com',
-    'exame.com',
-    'cnnbrasil.com.br',
-    'poder360.com.br',
-    'cartacapital.com.br'
-  ];
-
-  if (
-    host.endsWith('.br') ||
-    host.endsWith('.pt') ||
-    host.startsWith('pt.') ||
-    host.startsWith('br.') ||
-    brMediaHosts.some((d) => host === d || host.endsWith(`.${d}`)) ||
-    /\/(pt|pt-br|pt_br|br|portuguese|portugues|brasil)(\/|$)/i.test(path) ||
-    /-(pt|br)\b/i.test(path)
-  ) {
-    return true;
-  }
-
-  const text = `${item.title || ''} ${item.description || ''}`;
-  if (/\b(melhores\s+modelos|os\s+\d+\s+melhores|guia\s+completo|comparação\s+técnica|inteligências\s+artificiais|qual\s+a\s+melhor\s+ia|modelos\s+de\s+ia\s+mais|mapa\s+mundial\s+de\s+r[áa]dio|r[áa]dio\s+mundial,\s+ao\s+vivo)\b/i.test(text)) {
-    return true;
-  }
-
-  // Se estiver filtrando para polos internacionais (US, CN, DE, JP, KR, RU), rejeita títulos redigidos em português
-  if (forceInternationalCheck && /[ãõç]/i.test(text) && /\b(não|são|sob\s+os|liderança|política|relações|governo|educação|história|ciência|região|cidades|públicas|avaliação|produção|como\s+o|como\s+a)\b/i.test(text)) {
-    return true;
-  }
-
-  return false;
-}
-
-/**
- * Classifica o domínio semântico da consulta para rotear apenas as fontes apropriadas
- * (evitando poluir consultas de Política, Economia, Arquitetura Civil, Urbanismo ou Geografia com GitHub, Habr ou HackerNews).
- * Retorna: `'software_cs'` | `'exact_sciences'` | `'general_research'`
- */
-function classifyQueryDomain(rawQuery = '', focusMode = 'web') {
-  const mode = String(focusMode || 'web').trim().toLowerCase();
-  if (mode === 'code' || mode === 'secops') return 'software_cs';
-
-  const q = String(rawQuery || '').toLowerCase();
-
-  // 1. Arquitetura Civil, Urbanismo, Geografia, Política e Economia têm precedência sobre a palavra ambígua "arquitetura" ou "desenvolvimento"
-  const isCivilArchUrbanGeoPolEcon = /\b(urbanismo|planejamento\s+urbano|mobilidade\s+urbana|cidades?\s+compactas?|gentrifica[çc][ãa]o|zoneamento|plano\s+diretor|saneamento|arquitetura\s+(?:brutalista|bioclim[áa]tica|moderna|modernista|contempor[âa]nea|sustent[áa]vel|civil|urbana|paisag[íi]stica|g[óo]tica|barroca|colonial|de\s+interiores|hospitalar|escolar)|brutalismo|edif[íi]cios?|niemeyer|le\s+corbusier|bauhaus|zaha\s+hadid|frank\s+lloyd|geografia|relevo|hidrografia|bacia\s+hidrogr[áa]fica|cartografia|calotas?\s+polares?|degelo|[áa]rtico|ant[áa]rtida|geopol[íi]tica|diplomacia|pol[íi]tica\s+externa|pol[íi]tica\s+monet[áa]ria|pol[íi]tica\s+fiscal|elei[çc][õo]es|democracia|presid[êe]ncia|presidente|lula|bolsonaro|itamaraty|banco\s+central|taxa\s+de\s+juros|infla[çc][ãa]o|macroeconomia|pib|d[íi]vida\s+p[úu]blica|com[ée]rcio\s+internacional|desenvolvimento\s+(?:econ[ôo]mico|sustent[áa]vel|urbano|humano|social|regional))\b/i.test(q);
-
-  const hasExplicitSoftwareOrAi = /\b(software|programa[çc][ãa]o|coding|c[óo]digo[\s-]fonte|open[-\s]?source|github|\.git\b|linux|kernel|microkernel|sel4|sistema(?:s)?\s+operacional(?:is)?|operating\s+systems?|verifica[çc][ãa]o\s+formal|formal\s+verification|docker|kubernetes|microsservi[çc]os|microservices|api|rest|graphql|grpc|rust|python|javascript|typescript|golang|java|c\+\+|sql|postgres\w*|sqlite|redis|kafka|banco\s+de\s+dados|database|compilador|compiler|llm|llms|gpt|claude|qwen|deepseek|granite|ollama|machine\s+learning|aprendizado\s+de\s+m[áa]quina|deep\s+learning|rede\s+neural|intelig[êe]ncia\s+artificial|artificial\s+intelligence|\bia\b|cybersecurity|ciberseguran[çc]a|exploit|cve|vulnerabilidade|malware|ransomware|rootkit|pentest|engenharia\s+reversa|reverse\s+engineering|kademlia|quic|p2p|webrtc|websocket|ebpf|xdp|ftrace|hnsw|modelagem\s+3d|cad\b|blender|freecad|openscad|palantir|foundry)\b/i.test(q);
-
-  if (isCivilArchUrbanGeoPolEcon && !hasExplicitSoftwareOrAi) {
-    return 'general_research';
-  }
-
-  // 2. Ciências Exatas, Física Nuclear, Computação Quântica e Química
-  const isExactSciences = /\b(f[íi]sica\s+nuclear|nuclear|fiss[ãa]o|fission|fus[ãa]o|fusion|tokamak|iter|reator(?:es)?|reactor|ur[âa]nio|uranium|plut[ôo]nio|plutonium|smr|computa[çc][ãa]o\s+qu[âa]ntica|quantum\s+computing|f[íi]sica\s+qu[âa]ntica|quantum\s+physics|qubit|qubits|supercondutor\w*|superconducting|entrela[çc]amento|entanglement|decoer[êe]ncia|decoherence|c[óo]digos?\s+de\s+superf[íi]cie|surface\s+codes?|corre[çc][ãa]o\s+de\s+erros\s+qu[âa]nticos|quantum\s+error\s+correction|shor|grover|p[óo]s-qu[âa]ntic[oa]|ml-kem|kyber|dilithium|p[óo]lvora|gunpowder|termodin[âa]mica|astrof[íi]sica|relatividade|higgs|cern)\b/i.test(q);
-
-  if (isExactSciences && !/\b(github|reposit[óo]rio|open[-\s]?source)\b/i.test(q)) {
-    return 'exact_sciences';
-  }
-
-  if (hasExplicitSoftwareOrAi) {
-    return 'software_cs';
-  }
-
-  return 'general_research';
-}
-
-/**
- * Detecta se um candidato pertence a uma fazenda de conteúdo escolar rasa, dicionário ou clickbait (`LOW_SIGNAL_DOMAINS`),
- * usado para manter o Polo 🇧🇷 Brasil/Português restrito a fontes acadêmicas, enciclopédicas e técnicas de alto sinal.
- */
-function isLowSignalResult(item) {
-  if (!item || !item.url) return true;
-  let host = '';
-  try {
-    host = new URL(item.url).hostname.replace(/^www\./i, '').toLowerCase();
-  } catch (_) {
-    return true;
-  }
-  if (LOW_SIGNAL_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`))) {
-    return true;
-  }
-  const text = `${item.title || ''} ${item.description || ''}`;
-  if (/\b(os\s+\d+\s+melhores|descubra\s+qual\s+[eé]\s+a\s+melhor|veja\s+os\s+melhores)\b/i.test(text)) {
-    return true;
-  }
-  if (/^(worldradiomap\.com|universeradio\.app|aradio\.org|radiogarden\.live|mytuner-radio\.com|radios\.com\.br)$/.test(host)) {
-    return true;
-  }
-  return false;
-}
-
-/**
- * Mapa léxico PT/ES -> EN para expandir/converter pesquisas locais em consultas globais (Worldwide Research)
- * respeitando fielmente o domínio temático (Política, Economia, Software, Arquitetura, Urbanismo, Geografia, Física Nuclear, Computação Quântica).
- */
-const PT_TO_GLOBAL_TERMS = [
-  [/\bcomo\s+(?:o|a|os|as)?\s*lula\s+[eé]\s+vist[oa]\s+(?:no\s+mundo|internacionalmente|no\s+exterior|fora\s+do\s+brasil)\b/gi, 'Luiz Inácio Lula da Silva Brazil foreign policy international perception global diplomacy'],
-  [/\bcomo\s+(?:o|a|os|as)?\s*(.+?)\s+[eé]\s+vist[oa]s?\s+(?:no\s+mundo|internacionalmente|no\s+exterior)\b/gi, '$1 international perception global view foreign relations'],
-  [/\bcomo\s+(?:fazer|fabricar|produzir|sintetizar|preparar)\b/gi, 'synthesis composition'],
-  [/\b(?:como\s+funciona(?:m)?|o\s+que\s+s[ãa]o|o\s+que\s+[eé]|qual\s+[ea]\s+diferen[çc]a\s+entre|quais\s+s[ãa]o\s+(?:os|as)?|qual\s+[eo]?\s*|quais\s+[os|as]?\s*|me\s+explique|explique\s+como|procure|busque|encontre|me\s+traga|traga|liste|mostre|quero|preciso\s+de)\b/gi, ' '],
-  [/\b(?:materiais?|conte[úu]dos?|documenta[çc][ãa]o|artigos?|estudos?|guias?|tutoriais?|refer[êe]ncias?)\s+(?:de|da|do|dos|das|sobre|para|pela|pelo)\b/gi, ' '],
-  [/\bmateriais?\b/gi, ' '],
-  // Política & Geopolítica
-  [/\bpol[íi]tica\s+externa\b/gi, 'foreign policy diplomacy'],
-  [/\brela[çc][õo]es\s+internacionais\b/gi, 'international relations geopolitics'],
-  [/\bgeopol[íi]tica\s+do\s+[áa]rtico\b/gi, 'Arctic geopolitics polar maritime routes'],
-  [/\bgeopol[íi]tica\b/gi, 'geopolitics international relations'],
-  [/\bdiplomacia\b/gi, 'diplomacy foreign policy'],
-  // Economia & Macroeconomia
-  [/\bpol[íi]tica\s+monet[áa]ria\b/gi, 'monetary policy central bank'],
-  [/\bpol[íi]tica\s+fiscal\b/gi, 'fiscal policy public finance'],
-  [/\btaxa(?:s)?\s+de\s+juros\b/gi, 'interest rates monetary policy'],
-  [/\bbanco(?:s)?\s+central(?:is)?\b/gi, 'central bank monetary policy'],
-  [/\bcontrole\s+d[ea]\s+infla[çc][ãa]o\b/gi, 'inflation targeting monetary policy'],
-  [/\binfla[çc][ãa]o\b/gi, 'inflation macroeconomics'],
-  [/\bmacroeconomia\b/gi, 'macroeconomics economic policy'],
-  [/\bdesenvolvimento\s+econ[ôo]mico\b/gi, 'economic development growth'],
-  [/\bdesenvolvimento\s+sustent[áa]vel\b/gi, 'sustainable development sustainability'],
-  [/\bdesenvolvimento\s+urbano\b/gi, 'urban development city planning'],
-  [/\bdesenvolvimento\s+humano\b/gi, 'human development index'],
-  [/\bd[íi]vida\s+p[úu]blica\b/gi, 'public debt sovereign debt'],
-  [/\bcom[ée]rcio\s+internacional\b/gi, 'international trade global economy'],
-  // Arquitetura Civil & Urbanismo
-  [/\barquitetura\s+brutalista\b/gi, 'brutalist architecture modernist concrete buildings'],
-  [/\barquitetura\s+bioclim[áa]tica\b/gi, 'bioclimatic architecture passive solar sustainable building design'],
-  [/\barquitetura\s+contempor[âa]nea\b/gi, 'contemporary architecture architectural design'],
-  [/\barquitetura\s+moderna|\barquitetura\s+modernista\b/gi, 'modern architecture modernist architectural movement'],
-  [/\barquitetura\s+sustent[áa]vel\b/gi, 'sustainable architecture green building'],
-  [/\barquitetura\s+e\s+urbanismo\b/gi, 'architecture and urbanism urban design'],
-  [/\bplanejamento\s+urbano\b/gi, 'urban planning city planning'],
-  [/\bcidades?\s+compactas?\b/gi, 'compact cities urban density transit-oriented development'],
-  [/\bmobilidade\s+urbana\b/gi, 'urban mobility sustainable transport transit'],
-  [/\bmobilidade\s+sustent[áa]vel\b/gi, 'sustainable urban mobility transit'],
-  [/\burbanismo\b/gi, 'urbanism urban planning city design'],
-  [/\bgentrifica[çc][ãa]o\b/gi, 'gentrification urban sociology'],
-  // Geografia & Clima
-  [/\bgeografia\s+f[íi]sica\b/gi, 'physical geography geomorphology'],
-  [/\bgeografia\s+humana\b/gi, 'human geography spatial demography'],
-  [/\bgeografia\b/gi, 'geography spatial analysis'],
-  [/\bdegelo\s+das?\s+calotas?\s+polares?\b/gi, 'polar ice sheet melting Arctic cryosphere climate change'],
-  [/\bcalotas?\s+polares?\b/gi, 'polar ice caps cryosphere glaciology'],
-  [/\bdegelo\b/gi, 'ice melting glacier retreat'],
-  [/\b[áa]rtico\b/gi, 'Arctic polar region'],
-  [/\brotas?\s+mar[íi]timas?\b/gi, 'maritime shipping routes Northern Sea Route'],
-  [/\bbacia(?:s)?\s+hidrogr[áa]fica(?:s)?\b/gi, 'watershed river basin hydrology'],
-  [/\bmudan[çc]as?\s+clim[áa]ticas?\b/gi, 'climate change global warming'],
-  // Física Nuclear & Energia
-  [/\bf[íi]sica\s+nuclear\b/gi, 'nuclear physics atomic nucleus'],
-  [/\bfus[ãa]o\s+nuclear\b/gi, 'nuclear fusion plasma tokamak'],
-  [/\bfiss[ãa]o\s+nuclear\b/gi, 'nuclear fission reactor physics'],
-  [/\bconfinamento\s+magn[ée]tico\b/gi, 'magnetic confinement tokamak ITER'],
-  [/\breator(?:es)?\s+nuclear(?:es)?\s+de\s+fiss[ãa]o\b/gi, 'nuclear fission reactor'],
-  [/\breator(?:es)?\s+nuclear(?:es)?\b/gi, 'nuclear reactor'],
-  [/\breator(?:es)?\s+modular(?:es)?|\bsmr\b/gi, 'small modular reactors SMR nuclear'],
-  // Computação Quântica
-  [/\bcomputa[çc][ãa]o\s+qu[âa]ntica\b/gi, 'quantum computing quantum information'],
-  [/\bcorre[çc][ãa]o\s+de\s+erros?\s+qu[âa]nticos?\b/gi, 'quantum error correction fault-tolerant quantum'],
-  [/\bc[óo]digos?\s+de\s+superf[íi]cie\b/gi, 'surface codes topological quantum error correction'],
-  [/\bqubits?\s+supercondutor(?:es)?\b/gi, 'superconducting qubits transmon quantum processor'],
-  [/\bentrela[çc]amento\s+qu[âa]ntico\b/gi, 'quantum entanglement'],
-  [/\bf[íi]sica\s+qu[âa]ntica\b/gi, 'quantum physics quantum mechanics'],
-  // Software, IA & Cibersegurança
-  [/\bontologia(?:s)?\s+(?:de\s+)?(?:ia|i\.a\.|intelig[êe]ncia\s+artificial|dados)?\s*(?:pela|da|do|na|no|em)?\s*palantir\b/gi, 'Palantir Foundry AIP Ontology knowledge graph enterprise AI'],
-  [/\bontologia(?:s)?\b/gi, 'Ontology semantic data model knowledge graph'],
-  [/\bpalantir\b/gi, 'Palantir Foundry AIP'],
-  [/\bgrafo(?:s)?\s+de\s+conhecimento\b/gi, 'knowledge graph'],
-  [/\bmodelo(?:s)?\s+de\s+(?:ia|intelig[êe]ncia\s+artificial)\b/gi, 'AI model LLM'],
-  [/\bintelig[êe]ncia(?:s)?\s+artificial(?:is)?\b/gi, 'artificial intelligence AI'],
-  [/\b(?:ia|i\.a\.)\b/gi, 'AI'],
-  [/\bmais\s+(?:forte(?:s)?|poderoso(?:s)?|avan[çc]ado(?:s)?|inteligente(?:s)?|capaz(?:es)?|r[áa]pido(?:s)?|eficiente(?:s)?)\b/gi, 'strongest SOTA top'],
-  [/\bdesenvolvimento\s+de\s+(?:software|sistemas|aplica[çc][õo]es|c[óo]digo)\b/gi, 'software development coding programming'],
-  [/\bpara\s+desenvolvimento\b/gi, 'software development coding programming'],
-  [/\batualmente\b/gi, 'current'],
-  [/\bmicrosservi[çc]os\b/gi, 'microservices distributed architecture'],
-  [/\bprograma[çc][ãa]o\b/gi, 'programming coding'],
-  [/\bcomparativo|\bcompara[çc][ãa]o|\branking\b/gi, 'comparison benchmark'],
-  [/\bmodelagem\s+3d\b/gi, '3d modeling CAD'],
-  [/\bmodelagem\s+tridimensional\b/gi, '3d modeling CAD'],
-  [/\bescultura\s+digital\b/gi, 'digital sculpting 3d'],
-  [/\bmalha(?:s)?\s+poligonal(?:is)?\b/gi, 'polygon mesh 3d'],
-  [/\breposit[óo]rio(?:s)?\s+(?:do\s+|no\s+)?github\b/gi, 'github repository'],
-  [/\bc[óo]digo\s+aberto\b/gi, 'open source'],
-  [/\bp[óo]lvora\s+negra\b/gi, 'gunpowder black powder'],
-  [/\bp[óo]lvora\b/gi, 'gunpowder'],
-  [/\bconsenso\s+distribu[íi]do\b/gi, 'distributed consensus'],
-  [/\bsistemas?\s+distribu[íi]dos?\b/gi, 'distributed systems'],
-  [/\btoler[âa]ncia\s+a\s+falhas?\b/gi, 'fault tolerance'],
-  [/\bvulnerabilidade(?:s)?\b/gi, 'vulnerability CVE'],
-  [/\bfalha(?:s)?\s+de\s+seguran[çc]a\b/gi, 'security vulnerability'],
-  [/\bseguran[çc]a\s+da\s+informa[çc][ãa]o\b/gi, 'cybersecurity'],
-  [/\bseguran[çc]a\b/gi, 'security'],
-  [/\bengenharia\s+reversa\b/gi, 'reverse engineering'],
-  [/\bataque(?:s)?\b/gi, 'attack exploitation'],
-  [/\bc[óo]digo[\s-]fonte\b/gi, 'source code'],
-  [/\bimplementa[çc][ãa]o\b/gi, 'implementation'],
-  [/\barquitetura\b/gi, 'architecture'],
-  [/\bdesempenho\b/gi, 'performance'],
-  [/\bbanco\s+de\s+dados\b/gi, 'database'],
-  [/\bdados\b/gi, 'data'],
-  [/\bagente(?:s)?\b/gi, 'agents'],
-  [/\bsistema(?:s)?\s+operacional(?:is)?\b/gi, 'operating system'],
-  [/\bmem[óo]ria\s+cache\b/gi, 'CPU cache'],
-  [/\bmem[óo]ria\b/gi, 'memory'],
-  [/\brede(?:s)?\s+de\s+computadores\b/gi, 'computer networks'],
-  [/\bcriptografia\b/gi, 'cryptography'],
-  [/\baprendizado\s+de\s+m[áa]quina\b/gi, 'machine learning'],
-  [/\bcomposi[çc][ãa]o\s+qu[íi]mica\b/gi, 'chemical composition'],
-  [/\bqu[íi]mica\b/gi, 'chemistry'],
-  [/\bexplosivo(?:s)?\b/gi, 'explosive chemistry'],
-  [/\barmamento(?:s)?|\barma(?:s)?\b/gi, 'weapons ballistics'],
-  [/\bmodelo(?:s)?\b/gi, 'model'],
-  [/\bPresidente\s+do\s+Brasil\b/gi, 'President of Brazil'],
-  [/\b(?:fim\s+do\s+mundo|ju[íi]zo\s+final|apocalipse)\b/gi, 'doomsday'],
-  [/\btocou\b/gi, 'broadcast'],
-  [/\bconcorrente(?:s)?\b/gi, 'alternative competitor'],
-  [/\b(?:site|plataforma|portal)\s+d[eo]\b/gi, 'platform'],
-  // Segurança Alimentar, Estoque Estratégico de Alimentos & Preparação Civil
-  [/\b(?:estocar|armazenar|reservar|estocagem\s+de|estoque\s+de|reserva(?:s)?\s+(?:estrat[ée]gica(?:s)?\s+de\s+)?)\s*alimento(?:s)?\b/gi, 'strategic food reserves emergency food stockpiling food storage security'],
-  [/\bseguran[çc]a\s+alimentar\b/gi, 'food security strategic grain reserves'],
-  [/\bconserva[çc][ãa]o\s+de\s+alimento(?:s)?\b/gi, 'food preservation shelf life storage'],
-  [/\bsobrevivencialismo|\bprepper(?:s)?\b/gi, 'emergency preparedness survival food storage'],
-  [/\bbrasil\b/gi, 'Brazil'],
-  [/\bbrasileir[oa]s?\b/gi, 'Brazilian'],
-  [/\bhist[óo]ria\b/gi, 'history'],
-  [/\bno\s+mundo\b/gi, 'global international']
-];
-
-/**
- * Converte ou expande uma consulta para Global Research (Worldwide / English technical terms),
- * removendo travas regionais e muletas conversacionais que prendiam a busca em portais `.br` rasos.
- */
-function toGlobalResearchQuery(rawQuery, { forceGlobal = false } = {}) {
-  const clean = String(rawQuery || '')
-    .replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-')
-    .replace(/https?:\/\/[^\s"'<>]+/gi, ' ')
-    .replace(/\bhugface\b/gi, 'Hugging Face')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (!clean) return '';
-
-  // Se a consulta for explicitamente sobre o Brasil (e não estiver forçando tradução para polos internacionais), preserva os termos originais
-  if (!forceGlobal && isExplicitBrazilQuery(clean)) {
-    return clean;
-  }
-
-  let transformed = clean;
-  for (const [pattern, replacement] of PT_TO_GLOBAL_TERMS) {
-    transformed = transformed.replace(pattern, replacement);
-  }
-
-  // Remove pronomes/artigos e preposições soltas em português que atrapalham motores globais em inglês
-  transformed = transformed
-    .replace(/^(?:me\s+(?:explique|fale|diga)\s+(?:sobre|como)|explique\s+(?:detalhadamente\s+)?|pesquise\s+sobre\s+|tudo\s+sobre\s+)/i, '')
-    .replace(/\b(?:no\s+brasil|em\s+portugu[êe]s)\b/gi, '')
-    .replace(/\b(?:esse|essa|este|esta|isso|isto|[eé]|um|uma|uns|umas|no|na|nos|nas|do|da|dos|das|pelo|pela|para|por|com|sem|sobre|entre|que|de|em|os|as|ao|aos)\b/gi, ' ')
-    .replace(/[?!.]+$/, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  // Deduplica palavras adjacentes/repetidas mantendo a ordem
-  const uniqueTokens = [];
-  const seenLower = new Set();
-  for (const tok of transformed.split(/\s+/)) {
-    const l = tok.toLowerCase();
-    if (!seenLower.has(l)) {
-      seenLower.add(l);
-      uniqueTokens.push(tok);
-    }
-  }
-
-  return uniqueTokens.join(' ') || clean;
-}
-
-/**
- * Gera consultas nativas Multi-Polo nos 7 grandes centros tecnológicos e científicos mundiais:
- * 🇺🇸 EUA (EN), 🇨🇳 China (ZH), 🇩🇪 Alemanha (DE), 🇯🇵 Japão (JA), 🇰🇷 Coreia do Sul (KO), 🇷🇺 Rússia (RU) e 🇧🇷 Brasil (PT).
- */
-function buildMultiPolarQueries(rawQuery, focusMode = 'web') {
-  const normalizedRaw = String(rawQuery || '')
-    .replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-')
-    .replace(/\bhugface\b/gi, 'Hugging Face')
-    .trim();
-  const domain = classifyQueryDomain(normalizedRaw, focusMode);
-  const enBase = toGlobalResearchQuery(normalizedRaw, { forceGlobal: true });
-  const lower = `${normalizedRaw} ${enBase}`.toLowerCase();
-
-  const strippedPt = normalizedRaw
-    .replace(/https?:\/\/[^\s"'<>]+/gi, ' ')
-    .replace(/\b(?:esse\s+[eé]\s+o\s+site|eu\s+quero\s+o\s+site\s+que\s+[eé]\s+o|me\s+traga|traga|procure|busque|encontre|liste|mostre|explique|como\s+funciona(?:m)?|o\s+que\s+[eé]|qual\s+[eo]?|quais\s+(?:s[ãa]o|os|as)?|materiais?\s+(?:de|da|do|sobre)?|conte[úu]dos?\s+(?:de|sobre)?)\b/gi, ' ')
-    .replace(/\b(?:esse|essa|este|esta|pela|pelo|para|sobre)\b/gi, ' ')
-    .replace(/[?!.]+$/, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  let usQuery = enBase;
-  let academicCore = enBase;
-  let cnTerms = [];
-  let deTerms = [];
-  let jpTerms = [];
-  let krTerms = [];
-  let ruTerms = [];
-  let usWikiCustom = '';
-  let cnWikiCustom = '';
-  let deWikiCustom = '';
-  let jpWikiCustom = '';
-  let krWikiCustom = '';
-  let ruWikiCustom = '';
-  let enCoreCustom = '';
-  let brQuery = strippedPt || enBase;
-  let brWiki = strippedPt || enBase;
-
-  const isOntologyOrPalantir = /\b(ontolog\w*|palantir|foundry|aip|knowledge\s+graph|grafo\s+de\s+conhecimento|semantic\s+layer)\b/i.test(lower);
-  const isAiModelHubQuery = /\b(hugging\s*face|modelscope|opencsg|wisemodel)\b/i.test(lower);
-  const isModelBenchmark = !isOntologyOrPalantir && !isAiModelHubQuery && domain === 'software_cs' && /\b(llm|coding|programming|software\s+development|benchmark|leaderboard|strongest|best|top|sota)\b/i.test(lower) && /\b(ia|ai|llm|modelo|model|gpt|claude|qwen|deepseek)\b/i.test(lower);
-
-  // 1. Política, Diplomacia & Geopolítica (ex.: Lula, política externa, eleições, democracia)
-  if (/\b(lula|luiz\s+in[áa]cio)\b/i.test(lower) && !/\b(molusco|cefal[óo]pode)\b/i.test(lower)) {
-    usQuery = 'Luiz Inácio Lula da Silva Brazil foreign policy international perception diplomacy global south';
-    academicCore = 'Lula da Silva Brazil foreign policy international relations global diplomacy';
-    usWikiCustom = 'Luiz_Inácio_Lula_da_Silva OR Foreign_relations_of_Brazil';
-    cnTerms.push('卢拉·达席尔瓦', '巴西外交', '国际关系', '金砖国家');
-    deTerms.push('Luiz Inácio Lula da Silva', 'Außenpolitik Brasiliens', 'Internationale Beziehungen');
-    jpTerms.push('ルラ・ダ・シルヴァ', 'ブラジルの国際関係', '外交政策');
-    krTerms.push('루이스 이나시우 룰라 다 시우바', '브라질의 대외 관계', '외교 정책');
-    ruTerms.push('Луис Инасиу Лула да Силва', 'Внешняя политика Бразилии', 'БРИКС');
-    cnWikiCustom = '路易斯·伊纳西奥·卢拉·达席尔瓦 OR 巴西外交';
-    deWikiCustom = 'Luiz_Inácio_Lula_da_Silva OR Brasilianische_Außenpolitik';
-    jpWikiCustom = 'ルイス・イナシオ・ルーラ・ダ・シルヴァ OR ブラジルの国際関係';
-    krWikiCustom = '루이스_이나시우_룰라_다_시우바 OR 브라질';
-    ruWikiCustom = 'Лула_да_Силва,_Луис_Инасиу OR Внешняя_политика_Бразилии';
-    brQuery = 'Luiz Inácio Lula da Silva política externa brasileira percepção internacional diplomacia';
-    brWiki = 'Luiz Inácio Lula da Silva OR Política externa do governo Lula';
-  }
-
-  // 2. Economia, Política Monetária & Macroeconomia
-  if (/\b(economia|macroeconomia|pol[íi]tica\s+monet[áa]ria|pol[íi]tica\s+fiscal|taxa\s+de\s+juros|infla[çc][ãa]o|banco\s+central|monetary\s+policy|interest\s+rates|inflation|central\s+bank|desenvolvimento\s+econ[ôo]mico|pib|d[íi]vida\s+p[úu]blica)\b/i.test(lower)) {
-    usQuery = `${enBase} monetary policy central bank inflation interest rates macroeconomics`.trim();
-    academicCore = 'monetary policy interest rates inflation targeting central bank macroeconomics';
-    usWikiCustom = 'Monetary_policy OR Inflation_targeting OR Central_bank';
-    cnTerms.push('货币政策', '中央银行', '利率', '通货膨胀', '宏观经济学');
-    deTerms.push('Geldpolitik', 'Zentralbank', 'Leitzins', 'Inflation', 'Makroökonomie');
-    jpTerms.push('金融政策', '中央銀行', '政策金利', 'インフレーション', 'マクロ経済学');
-    krTerms.push('통화 정책', '중앙은행', '기준금리', '인플레이션', '거시경제학');
-    ruTerms.push('денежно-кредитная политика', 'центральный банк', 'процентная ставка', 'инфляция', 'макроэкономика');
-    cnWikiCustom = '货币政策 OR 通货膨胀 OR 中央银行';
-    deWikiCustom = 'Geldpolitik OR Inflation OR Zentralbank';
-    jpWikiCustom = '金融政策 OR インフレーション OR 中央銀行';
-    krWikiCustom = '통화_정책 OR 인플레이션 OR 중앙은행';
-    ruWikiCustom = 'Денежно-кредитная_политика OR Инфляция OR Центральный_банк';
-    brQuery = 'política monetária taxa de juros controle de inflação banco central macroeconomia';
-    brWiki = 'Política monetária OR Metas de inflação';
-  }
-
-  // 3. Arquitetura Civil (Brutalismo, Bioclimática, Contemporânea, Modernista)
-  if (/\b(arquitetura\s+(?:brutalista|bioclim[áa]tica|contempor[âa]nea|moderna|modernista|sustent[áa]vel|civil|urbana)|brutalismo|brutalist\s+architecture|bioclimatic\s+architecture|niemeyer|le\s+corbusier|bauhaus|zaha\s+hadid)\b/i.test(lower)) {
-    usQuery = 'brutalist architecture bioclimatic sustainable contemporary building design';
-    academicCore = 'bioclimatic architecture sustainable building design';
-    usWikiCustom = 'Brutalist architecture';
-    cnTerms.push('粗野主义建筑', '生物气候建筑', '绿色建筑', '现代建筑学');
-    deTerms.push('Brutalismus', 'Bioklimatische Architektur', 'Nachhaltiges Bauen', 'Moderne Architektur');
-    jpTerms.push('ブルータリズム', '環境共生建築', '現代建築', 'サステナブル建築');
-    krTerms.push('브루탈리즘', '친환경 건축', '현대 건축', '건축학');
-    ruTerms.push('брутализм', 'биоклиматическая архитектура', 'современная архитектура');
-    cnWikiCustom = '粗野主义';
-    deWikiCustom = 'Brutalismus';
-    jpWikiCustom = 'ブルータリズム';
-    krWikiCustom = '브루탈리즘';
-    ruWikiCustom = 'Брутализм';
-    brQuery = 'arquitetura brutalista e arquitetura bioclimática contemporânea sustentável';
-    brWiki = 'Arquitetura brutalista';
-  }
-
-  // 4. Urbanismo, Planejamento Urbano & Mobilidade
-  if (/\b(urbanismo|planejamento\s+urbano|cidades?\s+compactas?|mobilidade\s+urbana|mobilidade\s+sustent[áa]vel|urban\s+planning|compact\s+cities|transit[-\s]oriented|gentrifica[çc][ãa]o|zoneamento)\b/i.test(lower)) {
-    usQuery = 'urban planning compact cities transit-oriented development sustainable urban mobility';
-    academicCore = 'urban planning compact city sustainable mobility';
-    usWikiCustom = 'Urban planning';
-    cnTerms.push('城市规划', '紧凑城市', '公共交通导向型开发', '可持续城市交通');
-    deTerms.push('Stadtplanung', 'Stadt der kurzen Wege', 'Nachhaltige Mobilität', 'Urbanismus');
-    jpTerms.push('都市計画', 'コンパクトシティ', '公共交通指向型開発', '都市交通');
-    krTerms.push('도시계획', '압축도시', '대중교통 지향형 개발', '지속가능한 교통');
-    ruTerms.push('градостроительство', 'компактный город', 'урбанистика', 'устойчивый транспорт');
-    cnWikiCustom = '城市规划';
-    deWikiCustom = 'Stadtplanung';
-    jpWikiCustom = '都市計画';
-    krWikiCustom = '도시계획';
-    ruWikiCustom = 'Градостроительство';
-    brQuery = 'planejamento urbano urbanismo cidades compactas mobilidade urbana sustentável';
-    brWiki = 'Planejamento urbano';
-  }
-
-  // 5. Geografia, Geopolítica do Ártico, Clima & Geomorfologia
-  if (/\b(geografia|[áa]rtico|arctic|calotas?\s+polares?|degelo|rotas?\s+mar[íi]timas?|geomorfologia|bacia\s+hidrogr[áa]fica|relevo|polar\s+ice|northern\s+sea\s+route)\b/i.test(lower)) {
-    usQuery = 'Arctic geopolitics polar ice melting Northern Sea Route maritime geography climate change';
-    academicCore = 'Arctic sea ice Northern Sea Route geopolitics';
-    usWikiCustom = 'Northern Sea Route';
-    cnTerms.push('北极航道', '北极地缘政治', '极地冰盖融化', '自然地理学');
-    deTerms.push('Nordostpassage', 'Arktis Geopolitik', 'Polkappen Abschmelzen', 'Physische Geographie');
-    jpTerms.push('北極海航路', '北極圏', '海氷減少', '自然地理学');
-    krTerms.push('북극항로', '북극 지정학', '빙하 해빙', '자연지리학');
-    ruTerms.push('Северный морской путь', 'Арктика', 'таяние льдов', 'физическая география');
-    cnWikiCustom = '北方海路';
-    deWikiCustom = 'Nordostpassage';
-    jpWikiCustom = '北極海航路';
-    krWikiCustom = '북극항로';
-    ruWikiCustom = 'Северный морской путь';
-    brQuery = 'geografia geopolítica do Ártico degelo calotas polares rotas marítimas';
-    brWiki = 'Passagem do Nordeste';
-  }
-
-  // 6. Desenvolvimento de Software, Microsserviços, Linguagens & Sistemas Distribuídos
-  if (domain === 'software_cs' && !isOntologyOrPalantir && !isModelBenchmark && /\b(desenvolvimento|software|microsservi[çc]os|microservices|event[-\s]driven|kafka|rust|golang|python|java|api|distributed|consenso|consensus|raft|paxos|database|banco\s+de\s+dados|kernel|linux|ebpf|xdp|ftrace|p2p|kademlia|quic|hnsw)\b/i.test(lower)) {
-    academicCore = 'microservices event-driven distributed architecture';
-    usWikiCustom = 'Microservices';
-    cnTerms.push('微服务架构', '事件驱动架构', '分布式系统', '软件工程', '高并发');
-    deTerms.push('Microservices', 'Ereignisgesteuerte Architektur', 'Verteilte Systeme', 'Softwaretechnik');
-    jpTerms.push('マイクロサービス', 'イベント駆動型アーキテクチャ', '分散システム', 'ソフトウェア工学');
-    krTerms.push('마이크로서비스', '이벤트 기반 아키텍처', '분산 컴퓨팅', '소프트웨어 공학');
-    ruTerms.push('микросервисная архитектура', 'событийно-ориентированная архитектура', 'распределенные системы', 'разработка ПО');
-    cnWikiCustom = '微服务';
-    deWikiCustom = 'Microservices';
-    jpWikiCustom = 'マイクロサービス';
-    krWikiCustom = '마이크로서비스';
-    ruWikiCustom = 'Микросервисная архитектура';
-    brWiki = 'Microsserviços';
-  }
-
-  if (isOntologyOrPalantir) {
-    if (/\bpalantir\b/i.test(lower)) {
-      usQuery = 'Palantir Foundry AIP Ontology enterprise AI knowledge graph architecture';
-      academicCore = 'enterprise ontology knowledge graph LLM';
-      cnTerms.push('Palantir', 'Foundry', 'AIP', '本体', '知识图谱', '企业级AI', '语义层');
-      deTerms.push('Palantir Foundry', 'Ontologie Informatik', 'Wissensgraph', 'Künstliche Intelligenz');
-      jpTerms.push('Palantir', 'オントロジー', 'ナレッジグラフ', '知識グラフ', '人工知能');
-      krTerms.push('Palantir', '온톨로지', '지식 그래프', '인공지능');
-      ruTerms.push('Palantir', 'Foundry', 'онтология данных', 'граф знаний', 'ИИ', 'архитектура');
-      cnWikiCustom = '知识图谱';
-      deWikiCustom = 'Palantir Technologies';
-      jpWikiCustom = 'パランティア・テクノロジーズ';
-      krWikiCustom = '팔란티어 테크놀로지스';
-      ruWikiCustom = 'Palantir';
-      brQuery = 'Palantir Foundry AIP ontologia de dados inteligência artificial grafo de conhecimento';
-      brWiki = 'Palantir Technologies';
-    } else {
-      usQuery = `${enBase} ontology knowledge graph semantic model AI`.trim();
-      academicCore = 'ontology knowledge graph artificial intelligence';
-      cnTerms.push('本体论', '知识图谱', '语义建模', '人工智能', '大模型');
-      deTerms.push('Ontologie Informatik', 'Wissensgraph', 'Semantisches Netz', 'Künstliche Intelligenz');
-      jpTerms.push('オントロジー', 'ナレッジグラフ', '知識グラフ', '人工知能');
-      krTerms.push('온톨로지', '지식 그래프', '시맨틱 웹', '인공지능');
-      ruTerms.push('онтология', 'граф знаний', 'семантическая модель', 'искусственный интеллект');
-      cnWikiCustom = '知识图谱';
-      deWikiCustom = 'Wissensgraph';
-      jpWikiCustom = 'ナレッジグラフ';
-      krWikiCustom = '지식 그래프';
-      ruWikiCustom = 'Граф знаний';
-      brQuery = 'ontologia ciência da computação inteligência artificial grafo de conhecimento';
-      brWiki = 'Grafo de conhecimento';
-    }
-  } else if (isAiModelHubQuery) {
-    usQuery = 'ModelScope';
-    enCoreCustom = 'ModelScope Hugging Face China LLM';
-    academicCore = 'Hugging Face open source model hub AI community';
-    usWikiCustom = 'Hugging_Face';
-    cnTerms.push('魔搭社区', 'ModelScope', 'Hugging Face', '开源大模型社区', 'OpenCSG', '阿里云');
-    deTerms.push('Hugging Face', 'Großes Sprachmodell', 'Open-Source-KI');
-    jpTerms.push('Hugging Face', '大規模言語モデル', 'オープンソースAI');
-    krTerms.push('허깅 페이스', '대규모 언어 모델', '오픈소스 AI');
-    ruTerms.push('ModelScope', 'Hugging Face', 'открытые языковые модели', 'LLM');
-    cnWikiCustom = 'Hugging_Face';
-    deWikiCustom = 'Hugging_Face';
-    jpWikiCustom = 'Hugging_Face';
-    krWikiCustom = '허깅_페이스';
-    ruWikiCustom = 'Hugging_Face';
-    brQuery = 'ModelScope alternativa chinesa ao Hugging Face modelos LLM open source';
-    brWiki = 'Hugging Face';
-  } else if (isModelBenchmark) {
-    usQuery = `${enBase} SWE-bench LiveBench LMSYS evaluation`.trim();
-    academicCore = 'large language model code generation benchmark';
-    cnTerms.push('大模型', '编程', '代码生成', '评测', '基准', 'DeepSeek', 'Qwen', 'OpenCompass');
-    deTerms.push('Großes Sprachmodell', 'Künstliche Intelligenz', 'Programmierung', 'Benchmark');
-    jpTerms.push('大規模言語モデル', '生成AI', 'プログラミング', 'ベンチマーク');
-    krTerms.push('대규모 언어 모델', '생성형 인공지능', '코드 생성', '벤치마크');
-    ruTerms.push('большие языковые модели', 'LLM', 'программирование', 'бенчмарк', 'MERA', 'YandexGPT', 'GigaChat');
-    cnWikiCustom = '大语言模型';
-    deWikiCustom = 'Großes Sprachmodell';
-    jpWikiCustom = '大規模言語モデル';
-    krWikiCustom = '대규모 언어 모델';
-    ruWikiCustom = 'Большая языковая модель';
-    brQuery = 'modelos de inteligência artificial programação desenvolvimento de software LLM benchmark';
-    brWiki = 'Grande modelo de linguagem';
-  }
-  if (/\b(3d|cad|modeling|mesh|sculpting|blender|freecad)\b/i.test(lower)) {
-    academicCore = '3D CAD modeling open source mesh';
-    cnTerms.push('开源', '三维建模', 'CAD', '几何内核', '渲染引擎');
-    deTerms.push('3D-Modellierung', 'CAD', 'Freie Software', 'Computergrafik');
-    jpTerms.push('3DCGソフトウェア', '3次元コンピュータグラフィックス', 'CAD', 'オープンソース');
-    krTerms.push('3차원 모델링', '컴퓨터 지원 설계', '오픈 소스', '블렌더');
-    ruTerms.push('3D моделирование', 'САПР', 'открытый исходный код', 'геометрическое ядро', 'OpenCASCADE');
-    cnWikiCustom = '三维建模';
-    deWikiCustom = '3D-Modellierung';
-    jpWikiCustom = '3DCGソフトウェア';
-    krWikiCustom = '3차원 모델링';
-    ruWikiCustom = 'Трёхмерная графика';
-    brQuery = 'modelagem 3D código aberto CAD Blender FreeCAD computação gráfica';
-    brWiki = 'Modelagem 3D';
-  }
-  if (/\b(nuclear|fission|fusion|reactor|tokamak|iter|smr)\b/i.test(lower)) {
-    usQuery = 'nuclear fusion magnetic confinement tokamak ITER small modular reactors nuclear physics';
-    academicCore = 'nuclear fusion tokamak magnetic confinement';
-    usWikiCustom = 'Tokamak';
-    cnTerms.push('托卡马克', '核聚变', '磁约束聚变', '核反应堆', '核物理学');
-    deTerms.push('Kernfusion', 'Tokamak', 'ITER', 'Magnetischer Einschluss', 'Kernphysik');
-    jpTerms.push('核融合炉', 'トカマク型', 'ITER', '磁場閉じ込め方式', '原子核物理学');
-    krTerms.push('핵융합', '토카막', 'ITER', '소형 모듈 원자로', '핵물리학');
-    ruTerms.push('термоядерный синтез', 'токамак', 'ИТЭР', 'ядерный реактор', 'ядерная физика');
-    cnWikiCustom = '托卡马克';
-    deWikiCustom = 'Tokamak';
-    jpWikiCustom = 'トカマク型';
-    krWikiCustom = '토카막';
-    ruWikiCustom = 'Токамак';
-    brQuery = 'física nuclear fusão nuclear confinamento magnético tokamak ITER reatores nucleares';
-    brWiki = 'Tokamak';
-  }
-  if (/\b(security|vulnerability|cve|exploit|reverse\s+engineering|cybersecurity|attack|rootkit)\b/i.test(lower)) {
-    cnTerms.push('漏洞分析', '安全研究', '渗透测试', '逆向工程');
-    deTerms.push('Informationssicherheit', 'Sicherheitslücke', 'Exploit', 'Reverse_Engineering');
-    jpTerms.push('コンピュータセキュリティ', '脆弱性', 'リバースエンジニアリング');
-    krTerms.push('컴퓨터 보안', '취약점', '역공학', '익스플로잇');
-    ruTerms.push('уязвимость', 'эксплойт', 'информационная безопасность', 'реверс-инжиниринг');
-    deWikiCustom = deWikiCustom || 'Informationssicherheit';
-    jpWikiCustom = jpWikiCustom || 'コンピュータセキュリティ';
-    krWikiCustom = krWikiCustom || '컴퓨터 보안';
-  }
-  if (/\b(quantum|quântica|quantico|qubit|qubits|supercondutor\w*|superconducting|surface\s+codes?)\b/i.test(lower)) {
-    usQuery = 'quantum error correction surface codes superconducting qubits fault-tolerant quantum computing';
-    academicCore = 'quantum error correction superconducting qubits';
-    usWikiCustom = 'Quantum error correction';
-    cnTerms.push('量子纠错', '表面码', '超导量子比特', '量子计算');
-    deTerms.push('Quantenfehlerkorrektur', 'Supraleitendes Qubit', 'Quantencomputer', 'Quanteninformatik');
-    jpTerms.push('量子誤り訂正', '表面符号', '超伝導量子ビット', '量子コンピュータ');
-    krTerms.push('양자 오류 정정', '초전도 큐비트', '양자 컴퓨터', '큐비트');
-    ruTerms.push('квантовая коррекция ошибок', 'сверхпроводящие кубиты', 'квантовый компьютер', 'кубит');
-    cnWikiCustom = cnWikiCustom || '量子纠错';
-    deWikiCustom = deWikiCustom || 'Quantenfehlerkorrektur';
-    jpWikiCustom = jpWikiCustom || '量子誤り訂正';
-    krWikiCustom = krWikiCustom || '양자 오류 정정';
-    ruWikiCustom = ruWikiCustom || 'Квантовая коррекция ошибок';
-    brQuery = 'computação quântica correção de erros quânticos códigos de superfície qubits supercondutores';
-    brWiki = 'Correção de erro quântico';
-  }
-  if (/\b(gunpowder|explosive|chemistry|synthesis|napalm)\b/i.test(lower)) {
-    cnTerms.push('化学合成', '材料科学', '反应机理', '热力学');
-    deTerms.push('Chemische Synthese', 'Thermodynamik', 'Reaktionsmechanismus');
-    jpTerms.push('化学合成', '熱力学', '反応機構');
-    krTerms.push('화학 합성', '열역학', '반응 메커니즘');
-    ruTerms.push('химический синтез', 'термодинамика', 'состав', 'химия');
-  }
-  if (/\b(estocar\s+alimento\w*|estoque\s+de\s+alimento\w*|armazenar\s+alimento\w*|strategic\s+food\s+reserves?|emergency\s+food\s+stockpil\w*|food\s+storage|seguran[çc]a\s+alimentar|food\s+security)\b/i.test(`${rawQuery} ${lower}`)) {
-    usQuery = 'strategic food reserves emergency food stockpiling grain reserve food security 2026';
-    academicCore = 'strategic grain reserves food security emergency food storage supply chain resilience';
-    usWikiCustom = 'Strategic grain reserve';
-    enCoreCustom = 'strategic food reserves emergency food stockpiling food security 2026';
-    cnTerms.push('国家粮食储备', '粮食安全', '应急物资储备', '中储粮');
-    deTerms.push('Ernährungsvorsorge', 'Notvorrat', 'Zivile Notfallreserve', 'Bundesreserve Getreide');
-    jpTerms.push('食料安全保障', '備蓄', 'ローリングストック', '災害用備蓄食料');
-    krTerms.push('식량안보', '비상식량', '정부양곡', '식량비축');
-    ruTerms.push('Продовольственная безопасность', 'Росрезерв', 'государственный материальный резерв', 'запасы продовольствия');
-    cnWikiCustom = '粮食安全';
-    deWikiCustom = 'Zivile Notfallreserve';
-    jpWikiCustom = '備蓄';
-    krWikiCustom = '식량안보';
-    ruWikiCustom = 'Продовольственная безопасность';
-    brQuery = 'estocar alimentos reserva estratégica de alimentos segurança alimentar CONAB conservação de alimentos 2026';
-    brWiki = 'Segurança alimentar';
-  }
-  if (
-    /\b(outr[oa]s?|other|al[ée]m\s+d[aeo]|semelhantes?|parecid[oa]s?|similar|like)\b/i.test(`${rawQuery} ${lower}`) &&
-    /(?:uvb-?76|увб-?76|buzzer|ju[íi]zo\s+final|fim\s+do\s+mundo|doomsday)/i.test(`${rawQuery} ${lower}`)
-  ) {
-    usQuery = 'Numbers station The Pip Squeaky Wheel HFGCS Skyking';
-    enCoreCustom = 'Numbers station The Pip Squeaky Wheel HFGCS Skyking';
-    academicCore = 'shortwave numbers station military HF communication';
-    usWikiCustom = 'High Frequency Global Communications System';
-    cnTerms.push('数字电台', '短波广播', '末日广播');
-    deTerms.push('Monolith-Netzwerk', 'Zahlensender', 'The Pip', 'Squeaky Wheel');
-    jpTerms.push('乱数放送', '短波放送', 'ザ・ピップ');
-    krTerms.push('난수방송', '단파방송');
-    ruTerms.push('Номерные радиостанции', 'Капля', 'Скрипучее колесо', 'УВБ-76');
-    cnWikiCustom = '数字电台';
-    deWikiCustom = 'Monolith-Netzwerk';
-    jpWikiCustom = '乱数放送';
-    krWikiCustom = '난수방송';
-    ruWikiCustom = 'Номерные радиостанции';
-    brQuery = 'Estação de números rádios militares ondas curtas The Pip Squeaky Wheel HFGCS';
-    brWiki = 'Estação de números';
-  }
-
-  const coreTokens = enBase
-    .split(/\s+/)
-    .filter((w) => w.length >= 2 && !/^(strongest|best|top|sota|current|latest|comparison|synthesis|composition|2026|como|visto|mundo|qual|quais)$/i.test(w))
-    .slice(0, 6);
-  const coreJoined = coreTokens.join(' ') || enBase;
-
-  // ZERO hardcode de ciência da computação/software: se não bateu em uma regra específica acima,
-  // mantém o núcleo real da consulta do usuário (que será traduzido dinamicamente para cada idioma em tempo de execução).
-  return {
-    domain,
-    us: usQuery,
-    usWiki: usWikiCustom || coreJoined,
-    cn: cnTerms.length > 0 ? `${cnTerms.slice(0, 8).join(' ')} ${coreTokens.slice(0, 2).join(' ')}`.trim() : coreJoined,
-    cnWiki: cnWikiCustom || (cnTerms.length > 0 ? cnTerms.slice(0, 2).join(' ') : coreJoined),
-    de: deTerms.length > 0 ? `${deTerms.slice(0, 6).join(' ')}`.trim() : coreJoined,
-    deWiki: deWikiCustom || (deTerms.length > 0 ? deTerms.slice(0, 2).join(' ') : coreJoined),
-    jp: jpTerms.length > 0 ? `${jpTerms.slice(0, 6).join(' ')}`.trim() : coreJoined,
-    jpWiki: jpWikiCustom || (jpTerms.length > 0 ? jpTerms.slice(0, 2).join(' ') : coreJoined),
-    kr: krTerms.length > 0 ? `${krTerms.slice(0, 6).join(' ')}`.trim() : coreJoined,
-    krWiki: krWikiCustom || (krTerms.length > 0 ? krTerms.slice(0, 2).join(' ') : coreJoined),
-    ru: ruTerms.length > 0 ? `${ruTerms.slice(0, 8).join(' ')}`.trim() : coreJoined,
-    ruWiki: ruWikiCustom || (ruTerms.length > 0 ? ruTerms.slice(0, 2).join(' ') : coreJoined),
-    br: brQuery,
-    brWiki,
-    enCore: enCoreCustom || coreJoined,
-    academicCore: academicCore || coreJoined
-  };
-}
-
-const FOCUS_MODES = {
-  web: {
-    id: 'web',
-    label: 'Web',
-    querySuffix: ''
-  },
-  secops: {
-    id: 'secops',
-    label: 'SecOps / CVE',
-    querySuffix: 'CVE exploit advisory vulnerability writeup technical analysis'
-  },
-  code: {
-    id: 'code',
-    label: 'Code / Docs',
-    querySuffix: 'architecture implementation source code documentation example'
-  },
-  academic: {
-    id: 'academic',
-    label: 'Academic',
-    querySuffix: 'paper specification RFC research study formal analysis'
-  },
-  hybrid: {
-    id: 'hybrid',
-    label: 'Híbrido (Local + Web)',
-    querySuffix: ''
-  }
+const COUNTRY_CODE_TO_ACADEMIC_CONTEXT = {
+  US: 'United States',
+  CN: 'China',
+  DE: 'Germany',
+  JP: 'Japan',
+  KR: 'South Korea',
+  RU: 'Russia',
+  BR: 'Brazil'
 };
 
-const SEARCH_SCOPES = {
-  global: {
-    id: 'global',
-    label: 'Global · 7 Polos (US·CN·DE·JP·KR·RU·BR)'
-  },
-  external: {
-    id: 'external',
-    label: 'Só Externo (US·CN·DE·JP·KR·RU)'
-  },
-  brazil: {
-    id: 'brazil',
-    label: 'Só Brasil (PT-BR)'
-  }
-};
+let activeWikiRequests = 0;
+const wikiWaitQueue = [];
 
-function normalizeSearchScope(rawScope = 'global') {
-  const clean = String(rawScope || 'global').trim().toLowerCase();
-  return SEARCH_SCOPES[clean] ? clean : 'global';
-}
-
-const SEARCH_LANGUAGES = {
-  'pt-BR': { id: 'pt-BR', label: 'Português (BR)', tl: 'pt', name: 'Português do Brasil (pt-BR)' },
-  en: { id: 'en', label: 'English (US)', tl: 'en', name: 'English (en-US)' },
-  es: { id: 'es', label: 'Español (ES)', tl: 'es', name: 'Español (es)' },
-  de: { id: 'de', label: 'Deutsch (DE)', tl: 'de', name: 'Deutsch (de)' },
-  ja: { id: 'ja', label: '日本語 (JA)', tl: 'ja', name: 'Japanese / 日本語 (ja)' },
-  ko: { id: 'ko', label: '한국어 (KO)', tl: 'ko', name: 'Korean / 한국어 (ko)' },
-  zh: { id: 'zh', label: '中文 (ZH)', tl: 'zh-CN', name: 'Chinese / 简体中文 (zh-CN)' },
-  ru: { id: 'ru', label: 'Русский (RU)', tl: 'ru', name: 'Russian / Русский (ru)' }
-};
-
-function normalizeSearchLang(rawLang = 'pt-BR') {
-  const clean = String(rawLang || 'pt-BR').trim();
-  if (SEARCH_LANGUAGES[clean]) return clean;
-  const lower = clean.toLowerCase();
-  if (lower === 'pt' || lower === 'pt-br' || lower === 'pt_br') return 'pt-BR';
-  const match = Object.keys(SEARCH_LANGUAGES).find((k) => k.toLowerCase() === lower);
-  return match || 'pt-BR';
-}
-
-/**
- * Enriquecimento especializado de query segundo o Focus Mode selecionado
- * (estilo Perplexity Focus / Phind / Perplexica).
- */
-function applyFocusModeToQuery(rawQuery, focusMode = 'web') {
-  const clean = String(rawQuery || '').trim();
-  const modeKey = String(focusMode || 'web').trim().toLowerCase();
-  const mode = FOCUS_MODES[modeKey];
-  if (!clean || !mode || !mode.querySuffix) {
-    return clean.slice(0, 380);
-  }
-  const lower = clean.toLowerCase();
-  const suffixTokens = mode.querySuffix
-    .split(/\s+/)
-    .filter((tok) => tok && !lower.includes(tok.toLowerCase()));
-  if (suffixTokens.length === 0) {
-    return clean.slice(0, 380);
-  }
-  return `${clean} ${suffixTokens.slice(0, 4).join(' ')}`.trim().slice(0, 380);
-}
-
-/**
- * Constrói uma query de busca contextualizada quando a pergunta atual é um follow-up
- * dentro de uma conversa existente.
- */
-function buildContextualSearchQuery(question, priorTurns = [], focusMode = 'web') {
-  const cleanQuestion = String(question || '').trim();
-  if (!priorTurns || priorTurns.length === 0) {
-    return applyFocusModeToQuery(cleanQuestion, focusMode);
-  }
-
-  const firstQuestion = String(priorTurns[0]?.question || '').trim();
-  const lastQuestion = String(priorTurns[priorTurns.length - 1]?.question || '').trim();
-
-  // Se a pergunta atual já contém o tema principal da conversa (ex.: chips de follow-up), não duplica
-  const firstWords = firstQuestion
-    .toLowerCase()
-    .split(/\s+/)
-    .filter((w) => w.length > 3);
-  const lowerCurrent = cleanQuestion.toLowerCase();
-  if (firstWords.length > 0) {
-    const matchedCount = firstWords.filter((w) => lowerCurrent.includes(w)).length;
-    if (matchedCount / firstWords.length >= 0.5) {
-      return applyFocusModeToQuery(cleanQuestion, focusMode);
-    }
-  }
-
-  const words = cleanQuestion.split(/\s+/).filter(Boolean);
-  // Uma única palavra isolada (ex.: "granadas", "novelas") é tratada como novo tópico direto
-  if (words.length === 1 && !/^(isso|ele|ela|eles|elas|porquê|porque|why|how)$/i.test(words[0])) {
-    return applyFocusModeToQuery(cleanQuestion, focusMode);
-  }
-
-  const needsContext =
-    words.length < 7 ||
-    /^¿?(e\b|mas\b|como\b|qual\b|quais\b|quanto\b|por que\b|porque\b|onde\b|quando\b|isso\b|ele\b|ela\b|eles\b|deles\b|disso\b|nesse\b|nessa\b|what about|how about|and\b|why\b|y\b|pero\b|cómo\b|cuál\b|cuáles\b|qué\b|por qué\b|dónde\b|cuándo\b|quién\b)/i.test(cleanQuestion);
-
-  if (!needsContext) {
-    return applyFocusModeToQuery(cleanQuestion, focusMode);
-  }
-
-  const anchor = lastQuestion && lastQuestion !== firstQuestion && !lastQuestion.includes(firstQuestion)
-    ? `${firstQuestion} ${lastQuestion}`
-    : firstQuestion;
-
-  const combined = `${anchor} — ${cleanQuestion}`.replace(/\s+/g, ' ').trim();
-  return applyFocusModeToQuery(combined, focusMode);
-}
-
-/**
- * Calcula um score de coerência e autoridade global para priorizar fontes primárias
- * internacionais (Wikipedia EN, ArXiv, GitHub, Kernel.org, NVD, IEEE, RFCs) e rebaixar
- * portais escolares/dicionários rasos (`.br`).
- */
-function scoreResultCoherence(item, query = '') {
-  if (!item || !item.url) return -100;
-  let host = '';
-  try {
-    host = new URL(item.url).hostname.replace(/^www\./i, '').toLowerCase();
-  } catch (_) {
-    return -100;
-  }
-
-  let score = 0;
-
-  // Penaliza pesadamente fazendas de conteúdo escolar ou dicionários rasos
-  if (LOW_SIGNAL_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`))) {
-    score -= 60;
-  }
-
-  // Impulsiona domínios globais de referência científica, técnica e segurança (EUA, China, Rússia, Global)
-  if (HIGH_SIGNAL_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`))) {
-    score += 25;
-  }
-
-  // Bloqueio Anti-Bolha Geográfica: penaliza severamente domínios .br, .pt, rotas /pt/ e listicles em português
-  // quando a pergunta não é explicitamente sobre o Brasil
-  if (query && isPortugueseOrBrazilianBubbleResult(item, query)) {
-    score -= 120;
-  }
-
-  // Impulsiona resultados provenientes da Federação Multi-Polo (🇺🇸 US, 🇨🇳 CN, 🇷🇺 RU)
-  const rawText = `${item.title || ''} ${item.description || ''}`;
-  const isNativeCjkOrCyrillic = /[\u4e00-\u9fff\u0400-\u04ff]/.test(rawText);
-  if (item.countryPole || isNativeCjkOrCyrillic) {
-    score += 20;
-  }
-
-  // Penaliza páginas sem aderência lexical com o núcleo da consulta original ou global
-  if (query) {
-    const queryTokens = extractSubjectTokens(`${query} ${toGlobalResearchQuery(query)}`);
-    const hay = `${item.title || ''} ${item.description || ''} ${item.url || ''}`.toLowerCase();
-
-    if (!/\b(banda|m[úu]sica|filme|[áa]lbum|pe[çc]a|jogo|game|music|movie|play)\b/i.test(query)) {
-      if (/\b(stage play|philip ridley|streaming music player|grindcore|studio album|video game|survival game)\b/i.test(hay)) {
-        score -= 55;
+async function withWikiConcurrencyLimit(fn, signal = null) {
+  if (signal?.aborted) return [];
+  if (activeWikiRequests >= 2) {
+    await new Promise((resolve) => {
+      if (signal?.aborted) {
+        resolve();
+        return;
       }
-    }
-
-    if (queryTokens.length > 0 && !item.countryPole && !isNativeCjkOrCyrillic) {
-      const matchedCount = queryTokens.filter((tok) => hay.includes(tok)).length;
-      if (matchedCount === 0) {
-        score -= 45;
-      } else if (queryTokens.length >= 3 && matchedCount === 1 && score > 0) {
-        // Se a consulta tem 3+ termos técnicos e o candidato acertou apenas 1 palavra isolada, reduz o bônus de domínio
-        score -= 15;
-      }
-    }
-  }
-
-  return score;
-}
-
-/**
- * Normaliza, pontua coerência global e filtra até `count` URLs HTTP/HTTPS únicas de uma lista bruta.
- */
-function normalizeTopResults(rawItems = [], count = MAX_RESULTS, query = '') {
-  const seenUrls = new Set();
-  const deduped = [];
-
-  for (let idx = 0; idx < rawItems.length; idx++) {
-    const item = rawItems[idx];
-    if (!item || typeof item.url !== 'string') continue;
-    let parsedUrl;
-    try {
-      parsedUrl = new URL(item.url);
-    } catch (_) {
-      continue;
-    }
-    if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
-      continue;
-    }
-    // Converte subdomínio mobile da Wikipédia (en.m.wikipedia.org -> en.wikipedia.org)
-    if (parsedUrl.hostname.endsWith('.m.wikipedia.org')) {
-      parsedUrl.hostname = parsedUrl.hostname.replace('.m.wikipedia.org', '.wikipedia.org');
-    }
-    const normalizedUrl = parsedUrl.toString();
-    if (seenUrls.has(normalizedUrl)) continue;
-    seenUrls.add(normalizedUrl);
-
-    const normalizedItem = {
-      url: normalizedUrl,
-      title: String(item.title || parsedUrl.hostname).replace(/\s+/g, ' ').trim(),
-      description: String(item.description || item.content || '').replace(/\s+/g, ' ').trim()
-    };
-    if (item.countryPole) normalizedItem.countryPole = item.countryPole;
-
-    deduped.push({
-      item: normalizedItem,
-      originalIndex: idx,
-      score: query ? scoreResultCoherence(normalizedItem, query) : 0
-    });
-  }
-
-  // Se houver resultados de boa qualidade (score > -30), descarta completamente fazendas de conteúdo raso e bolha .br (score <= -40)
-  const highCoherencePool = deduped.filter((entry) => entry.score > -40);
-  const effectivePool = highCoherencePool.length >= Math.min(2, count) ? highCoherencePool : deduped;
-
-  effectivePool.sort((a, b) => {
-    if (b.score !== a.score) return b.score - a.score;
-    return a.originalIndex - b.originalIndex;
-  });
-
-  return effectivePool.slice(0, count).map((entry) => entry.item);
-}
-
-/**
- * Consulta uma instância SearXNG (meta-buscador open-source 100% gratuito e sem chave)
- * via undici em formato JSON (`/search?q=...&format=json`) em modo Global (Worldwide).
- */
-async function searchSearxng(query, {
-  baseUrl = DEFAULT_SEARXNG_URL,
-  httpRequest = request,
-  timeoutMs = 8000,
-  count = MAX_RESULTS,
-  searchScope = 'global'
-} = {}) {
-  const effectiveScope = normalizeSearchScope(searchScope);
-  const cleanBase = String(baseUrl || DEFAULT_SEARXNG_URL).trim().replace(/\/+$/, '');
-  const url = new URL(`${cleanBase}/search`);
-  const effectiveQuery = httpRequest === request && effectiveScope !== 'brazil'
-    ? toGlobalResearchQuery(query)
-    : String(query || '').trim();
-  url.searchParams.set('q', effectiveQuery);
-  url.searchParams.set('format', 'json');
-  url.searchParams.set('language', effectiveScope === 'brazil' ? 'pt-BR' : 'all');
-
-  try {
-    const response = await httpRequest(url.toString(), {
-      method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-        'Accept-Language': effectiveScope === 'brazil' ? 'pt-BR,pt;q=0.9,en;q=0.7' : GLOBAL_ACCEPT_LANGUAGE,
-        'User-Agent': 'PerplexityLocal/1.0 (Global Research Engine)'
-      },
-      headersTimeout: timeoutMs,
-      bodyTimeout: timeoutMs
-    });
-
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      return {
-        results: [],
-        provider: 'searxng',
-        error: `SearXNG (${cleanBase}) retornou HTTP ${response.statusCode}`
+      const onAbort = () => {
+        const idx = wikiWaitQueue.indexOf(onResume);
+        if (idx !== -1) wikiWaitQueue.splice(idx, 1);
+        resolve();
       };
-    }
-
-    const payload = await response.body.json();
-    const rawResults = Array.isArray(payload?.results) ? payload.results : [];
-
-    // Em execução real (fora de mocks de teste unitário), executa a Federação conforme o searchScope selecionado
-    if (httpRequest === request) {
-      const multiPolarResults = await collectMultiPolarFederation(query, {
-        httpRequest,
-        timeoutMs,
-        extraRawResults: rawResults,
-        totalCount: MULTI_POLAR_RESULTS_COUNT,
-        searchScope: effectiveScope
-      });
-      if (multiPolarResults.length > 0) {
-        return {
-          results: multiPolarResults,
-          provider: 'searxng',
-          error: null
-        };
-      }
-    }
-
-    const topResults = normalizeTopResults(rawResults, count, query);
-
-    return {
-      results: topResults,
-      provider: 'searxng',
-      error: null
-    };
-  } catch (err) {
-    return {
-      results: [],
-      provider: 'searxng',
-      error: `Falha ao consultar SearXNG (${cleanBase}): ${err?.message || String(err)}`
-    };
+      const onResume = () => {
+        if (signal) signal.removeEventListener('abort', onAbort);
+        resolve();
+      };
+      if (signal) signal.addEventListener('abort', onAbort, { once: true });
+      wikiWaitQueue.push(onResume);
+    });
   }
+  if (signal?.aborted) return [];
+  activeWikiRequests += 1;
+  try {
+    return await fn();
+  } finally {
+    activeWikiRequests = Math.max(0, activeWikiRequests - 1);
+    if (wikiWaitQueue.length > 0) {
+      const next = wikiWaitQueue.shift();
+      next();
+    }
+  }
+}
+
+async function drainBody(response) {
+  try {
+    if (response?.body && typeof response.body.dump === 'function') {
+      await response.body.dump();
+    } else if (response?.body && typeof response.body.destroy === 'function') {
+      response.body.destroy();
+    }
+  } catch (_) {}
+}
+
+function createDeadline(deadlineMs, externalSignal = null) {
+  const controller = new AbortController();
+  const safeMs = Math.max(500, Number(deadlineMs) || DEFAULT_SEARCH_DEADLINE_MS);
+  const timer = setTimeout(() => controller.abort(), safeMs);
+  const onExternalAbort = () => controller.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      controller.abort();
+    } else {
+      externalSignal.addEventListener('abort', onExternalAbort, { once: true });
+    }
+  }
+  const cleanup = () => {
+    clearTimeout(timer);
+    if (externalSignal) {
+      externalSignal.removeEventListener('abort', onExternalAbort);
+    }
+  };
+  return { signal: controller.signal, cleanup };
+}
+
+function buildRequestOpts(httpRequest, opts, { localService = false } = {}) {
+  const out = { ...opts };
+  if (httpRequest === request) {
+    out.dispatcher = localService ? localServiceDispatcher : safeExternalDispatcher;
+  }
+  return out;
 }
 
 /**
@@ -1143,155 +175,42 @@ function rewriteQueryForTechnicalSearch(rawQuery) {
 }
 
 /**
- * Extrai tokens substantivos distintivos de uma query para validar coerência real
- * e descartar páginas de honeypot/decoy do Bing (ex.: "Santa Catarina", "Summer Place", "Joias").
+ * Verifica overlap mínimo estrito de tokens (exige >= 2 tokens distintos ou >= 50% dos termos significativos).
  */
-function extractSubjectTokens(query = '') {
-  const cleaned = String(toGlobalResearchQuery(query) || query || '')
-    // Converte URLs do GitHub em "<owner> <repo>" sem os termos "https", "github", "com"
-    .replace(/https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)/gi, ' $1 $2 ')
-    // Remove demais URLs brutas para que "https", "http", "com", "org" nunca virem tokens de busca
-    .replace(/https?:\/\/[^\s"'<>]+/gi, ' ')
-    // Remove sufixo .git mantendo o nome do projeto (ex.: ARTEX.git -> ARTEX)
-    .replace(/\.git\b/gi, ' ')
-    // Remove frases de template de follow-up
-    .replace(/\b(?:an[áa]lise\s+t[ée]cnica\s+direta|fontes\s+verificadas|funciona\s+na\s+pr[áa]tica|dentro\s+do\s+contexto\s+de|incidentes?\s+globais?\s+com|tem\s+fontes?\s+do\s+incidente)\b/gi, ' ');
+function passesStrictTokenOverlap(haystack, tokens, { minTokens = 2, minRatio = 0.5 } = {}) {
+  if (!Array.isArray(tokens) || tokens.length === 0) return true;
+  const normHay = normalizeHyphens(haystack)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
 
-  return [...new Set(
-    cleaned
-      .toLowerCase()
-      .replace(/[^\p{L}\p{N}\s_-]/gu, ' ')
-      .split(/\s+/)
-      .filter((w) => (w.length >= 3 || w === '3d' || w === 'ai' || w === 'os') && !/^(how|what|why|when|where|who|which|the|and|for|with|from|into|http|https|www|com|org|net|git|github|repository|repositories|software|softwares|opensource|open|source|code|documentation|example|implementation|como|que|qual|quais|para|com|dos|das|uma|uns|umas|por|pela|pelo|sobre|entre|fazer|funciona|funcionam|prática|pratica|contexto|dentro|análise|analise|técnica|tecnica|direta|fontes|incidente|incidentes|globais|global|arquitetura|sistema|sistemas|procure|busque|traga|mostre|liste|materiais|material|conteudos|conteúdos|conteudo|conteúdo|documentacao|documentação|artigos|artigo|estudos|estudo|guias|guia|principais|melhores|repositório|repositorio|repositórios|repositorios|process|technical|overview|architecture|mechanism|internals|design|differences|comparison|synthesis|chemical|composition|esse|essa|este|esta|site|sites|website|platform|plataforma|concorrente|competitor|alternative|end|fim|mundo|world|tocou|played)$/.test(w))
-  )];
-}
-
-/**
- * Detecta URLs explícitas (`https://...`), referências a repositórios (`github.com/owner/repo`, `NOME.git`)
- * ou arquiteturas corporativas canônicas presentes na pergunta do usuário para buscá-las em 1º lugar.
- */
-async function resolveDirectUrlAndGitCandidates(query, { httpRequest = request, timeoutMs = 4500 } = {}) {
-  const raw = String(query || '');
-  const candidates = [];
-  const seenUrls = new Set();
-
-  // 0. Arquitetura Canônica Palantir Foundry / AIP Ontology quando solicitada diretamente
-  if (/\bpalantir\b/i.test(raw) && /\b(ontolog\w*|foundry|aip|ia|ai|dados|data|grafo|graph)\b/i.test(raw)) {
-    const palantirDocUrl = 'https://www.palantir.com/docs/foundry/ontology/overview';
-    seenUrls.add(palantirDocUrl);
-    candidates.push({
-      url: palantirDocUrl,
-      title: '[🇺🇸 US] Palantir Foundry & AIP Ontology — Official Architecture Documentation',
-      description: '[🇺🇸 US] The Palantir Ontology is the operational digital twin and semantic layer of the enterprise inside Palantir Foundry and AIP (Artificial Intelligence Platform). It maps raw datasets, streaming pipelines, and ML models into semantic Objects, Properties, Links (knowledge graph relationships), Actions (transactional kinetic operations with governance/RBAC), and Functions (TypeScript/Python business logic). In Palantir AIP, LLMs and autonomous AI agents interact with the enterprise exclusively through the Ontology SDK (OSDK), grounding generative AI in real-time operational data, deterministic tool-use Actions, and granular security permissions without hallucination.',
-      countryPole: 'US'
-    });
-  }
-
-  // 1. URLs diretas explícitas digitadas pelo usuário (ex.: https://github.com/BaaRai/ARTEX)
-  const urlMatches = raw.match(/https?:\/\/[^\s"'<>?]+/gi) || [];
-  for (const rawUrl of urlMatches) {
-    const cleanUrl = rawUrl.replace(/[.,;!?)]+$/, '').replace(/\.git$/i, '');
-    if (seenUrls.has(cleanUrl)) continue;
-    seenUrls.add(cleanUrl);
-
-    const ghMatch = cleanUrl.match(/^https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/i);
-    if (ghMatch) {
-      const owner = ghMatch[1];
-      const repo = ghMatch[2];
-      try {
-        const apiRes = await httpRequest(`https://api.github.com/repos/${owner}/${repo}`, {
-          method: 'GET',
-          headers: {
-            'User-Agent': 'DeepEvil/1.0 (Global Research Engine)',
-            'Accept': 'application/vnd.github+json'
-          },
-          headersTimeout: timeoutMs,
-          bodyTimeout: timeoutMs
-        });
-        if (apiRes.statusCode === 200) {
-          const meta = await apiRes.body.json();
-          candidates.push({
-            url: `https://github.com/${owner}/${repo}`,
-            title: `${meta.full_name || `${owner}/${repo}`} — ${meta.description || 'GitHub Repository'}`,
-            description: `${meta.description || ''} Language: ${meta.language || 'N/A'}. Stars: ${meta.stargazers_count || 0}. Forks: ${meta.forks_count || 0}. License: ${meta.license?.spdx_id || 'N/A'}. Repository URL: https://github.com/${owner}/${repo}`
-          });
-          continue;
-        } else if (apiRes.body && typeof apiRes.body.dump === 'function') {
-          await apiRes.body.dump().catch(() => {});
-        }
-      } catch (_) {}
+  let matched = 0;
+  for (const tok of tokens) {
+    const normTok = normalizeHyphens(tok)
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase();
+    if (!normTok) continue;
+    const stem = normTok.length >= 6 ? normTok.slice(0, normTok.length - 2) : normTok;
+    if (normHay.includes(normTok) || (stem.length >= 4 && normHay.includes(stem))) {
+      matched += 1;
     }
-
-    candidates.push({
-      url: cleanUrl,
-      title: cleanUrl,
-      description: `Direct URL referenced in user query: ${cleanUrl}`
-    });
   }
 
-  // 2. Menções a <projeto>.git (ex.: "ARTEX.git") quando não há URL explícita
-  const gitTokenMatches = [...raw.matchAll(/\b([A-Za-z0-9_-]{3,})\.git\b/gi)];
-  for (const m of gitTokenMatches) {
-    const repoKeyword = m[1];
-    try {
-      const ghHits = await searchGitHubGlobal(repoKeyword, { httpRequest, timeoutMs, count: 2 });
-      for (const hit of ghHits) {
-        if (!seenUrls.has(hit.url)) {
-          seenUrls.add(hit.url);
-          candidates.push(hit);
-        }
-      }
-    } catch (_) {}
-  }
-
-  return candidates;
+  const required = tokens.length === 1
+    ? 1
+    : Math.min(tokens.length, Math.max(minTokens, Math.ceil(tokens.length * minRatio)));
+  return matched >= required;
 }
 
-/**
- * Resolve conceitos técnicos em português/espanhol para seus títulos canônicos na Wikipedia em Inglês (`en.wikipedia.org`)
- * via grafo interlínguas (`prop=langlinks&lllang=en`), eliminando barreiras de idioma em pesquisas científicas.
- */
-async function resolveWikipediaEnglishConcepts(query, { httpRequest = request, timeoutMs = 3500 } = {}) {
-  if (!query || isExplicitBrazilQuery(query)) return [];
-  const stripped = String(query || '')
-    .replace(/^(?:como\s+(?:fazer|fabricar|funciona|funcionam|usar|criar|explorar)|o\s+que\s+[eé]|qual\s+[ea]\s+diferen[çc]a\s+entre|quais\s+s[ãa]o|arquitetura\s+de|vulnerabilidade\s+de)\s+/i, '')
-    .replace(/[?!.]+$/, '')
-    .trim();
-  if (!stripped) return [];
-
-  try {
-    const apiUrl = `https://pt.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(stripped)}&gsrlimit=2&prop=langlinks&lllang=en&format=json`;
-    const res = await httpRequest(apiUrl, {
-      method: 'GET',
-      headers: {
-        'User-Agent': 'DeepEvil/1.0 (Global Research Engine)',
-        'Accept-Language': GLOBAL_ACCEPT_LANGUAGE
-      },
-      headersTimeout: timeoutMs,
-      bodyTimeout: timeoutMs
-    });
-    if (res.statusCode !== 200) return [];
-    const data = await res.body.json();
-    const pages = Object.values(data?.query?.pages || {}).sort((a, b) => (a.index || 99) - (b.index || 99));
-    const queryLower = stripped.toLowerCase();
-
-    return pages
-      .filter((p) => {
-        const ptTitle = String(p?.title || '').toLowerCase();
-        const enTitle = String(p?.langlinks?.[0]?.['*'] || '').toLowerCase();
-        if (!enTitle) return false;
-        if (/\b(band|album|film|song|discography|record label|napalm death|napalm records)\b/i.test(enTitle)) {
-          return false;
-        }
-        // Só aceita o conceito se o título PT tiver interseção lexical com a consulta original
-        const titleWords = ptTitle.split(/\s+/).filter((w) => w.length >= 4);
-        return titleWords.length === 0 || titleWords.some((w) => queryLower.includes(w));
-      })
-      .map((p) => p.langlinks[0]['*'])
-      .slice(0, 1);
-  } catch (_) {
-    return [];
-  }
+function matchesAnyCallsign(haystack, callsigns = []) {
+  if (!Array.isArray(callsigns) || callsigns.length === 0) return true;
+  const normHay = normalizeHyphens(haystack).toLowerCase();
+  return callsigns.some((cs) => {
+    const [prefixPart, numPart] = cs.split('-');
+    if (!prefixPart || !numPart) return normHay.includes(cs);
+    return new RegExp(`(?:^|[^\\p{L}\\p{N}])${prefixPart}[-\\s]?${numPart}(?:$|[^\\p{L}\\p{N}])`, 'iu').test(normHay);
+  });
 }
 
 /**
@@ -1311,105 +230,224 @@ function reconstructOpenAlexAbstract(invertedIndex) {
   return words.filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
 }
 
-const academicSearchCache = new Map();
-const wikiSearchCache = new Map();
+/**
+ * Detecta URLs explícitas (`https://...`), referências a repositórios (`github.com/owner/repo`, `NOME.git`)
+ * ou documentação oficial diretamente referenciada na pergunta do usuário.
+ */
+async function resolveDirectUrlAndGitCandidates(query, { httpRequest = request, timeoutMs = 3500, signal = null } = {}) {
+  const raw = String(query || '');
+  const candidates = [];
+  const seenUrls = new Set();
 
-let activeWikiRequests = 0;
-const wikiWaitQueue = [];
-
-async function withWikiConcurrencyLimit(fn) {
-  if (activeWikiRequests >= 2) {
-    await new Promise((resolve) => wikiWaitQueue.push(resolve));
+  if (/\bpalantir\b/i.test(raw) && /\b(ontolog\w*|foundry|aip|ia|ai|dados|data|grafo|graph)\b/i.test(raw)) {
+    const palantirDocUrl = 'https://www.palantir.com/docs/foundry/ontology/overview';
+    seenUrls.add(palantirDocUrl);
+    candidates.push({
+      url: palantirDocUrl,
+      title: '[🇺🇸 US] Palantir Foundry & AIP Ontology — Official Architecture Documentation',
+      description: '[🇺🇸 US] The Palantir Ontology is the operational digital twin and semantic layer inside Palantir Foundry and AIP, mapping datasets, streaming pipelines, and ML models into semantic Objects, Properties, Links, Actions, and Functions.',
+      countryPole: 'US',
+      engine: 'direct',
+      engineRank: 1,
+      isDirectCandidate: true
+    });
   }
-  activeWikiRequests += 1;
-  try {
-    return await fn();
-  } finally {
-    await new Promise((r) => setTimeout(r, 55));
-    activeWikiRequests = Math.max(0, activeWikiRequests - 1);
-    if (wikiWaitQueue.length > 0) {
-      const next = wikiWaitQueue.shift();
-      next();
+
+  const urlMatches = raw.match(/https?:\/\/[^\s"'<>?]+/gi) || [];
+  for (const rawUrl of urlMatches) {
+    if (signal?.aborted) break;
+    const cleanUrl = rawUrl.replace(/[.,;!?)]+$/, '').replace(/\.git$/i, '');
+    if (seenUrls.has(cleanUrl)) continue;
+    seenUrls.add(cleanUrl);
+
+    const ghMatch = cleanUrl.match(/^https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/i);
+    if (ghMatch) {
+      const owner = ghMatch[1];
+      const repo = ghMatch[2];
+      try {
+        const apiRes = await httpRequest(
+          `https://api.github.com/repos/${owner}/${repo}`,
+          buildRequestOpts(httpRequest, {
+            method: 'GET',
+            headers: {
+              'User-Agent': 'DeepEvil/1.0 (Global Research Engine)',
+              'Accept': 'application/vnd.github+json'
+            },
+            headersTimeout: timeoutMs,
+            bodyTimeout: timeoutMs,
+            signal
+          })
+        );
+        if (apiRes.statusCode === 200) {
+          const meta = await apiRes.body.json();
+          candidates.push({
+            url: `https://github.com/${owner}/${repo}`,
+            title: `${meta.full_name || `${owner}/${repo}`} — ${meta.description || 'GitHub Repository'}`,
+            description: `${meta.description || ''} Language: ${meta.language || 'N/A'}. Stars: ${meta.stargazers_count || 0}. Forks: ${meta.forks_count || 0}. License: ${meta.license?.spdx_id || 'N/A'}.`,
+            engine: 'direct',
+            engineRank: 1,
+            isDirectCandidate: true
+          });
+          continue;
+        }
+        await drainBody(apiRes);
+      } catch (_) {}
     }
+
+    candidates.push({
+      url: cleanUrl,
+      title: cleanUrl,
+      description: `Direct URL referenced in user query: ${cleanUrl}`,
+      engine: 'direct',
+      engineRank: 1,
+      isDirectCandidate: true
+    });
+  }
+
+  const gitTokenMatches = [...raw.matchAll(/\b([A-Za-z0-9_-]{3,})\.git\b/gi)];
+  for (const m of gitTokenMatches) {
+    if (signal?.aborted) break;
+    const repoKeyword = m[1];
+    try {
+      const ghHits = await searchGitHubGlobal(repoKeyword, { httpRequest, timeoutMs, count: 2, signal });
+      for (const hit of ghHits) {
+        if (!seenUrls.has(hit.url)) {
+          seenUrls.add(hit.url);
+          candidates.push({ ...hit, isDirectCandidate: true });
+        }
+      }
+    } catch (_) {}
+  }
+
+  return candidates;
+}
+
+/**
+ * Resolve conceitos técnicos em português/espanhol para seus títulos canônicos na Wikipedia em Inglês.
+ */
+async function resolveWikipediaEnglishConcepts(query, { httpRequest = request, timeoutMs = 3000, signal = null } = {}) {
+  if (!query || isExplicitBrazilQuery(query) || signal?.aborted) return [];
+  const stripped = String(query || '')
+    .replace(/^(?:como\s+(?:fazer|fabricar|funciona|funcionam|usar|criar|explorar)|o\s+que\s+[eé]|qual\s+[ea]\s+diferen[çc]a\s+entre|quais\s+s[ãa]o|arquitetura\s+de|vulnerabilidade\s+de)\s+/i, '')
+    .replace(/[?!.]+$/, '')
+    .trim();
+  if (!stripped) return [];
+
+  try {
+    const apiUrl = `https://pt.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(stripped)}&gsrlimit=2&prop=langlinks&lllang=en&format=json`;
+    const res = await httpRequest(
+      apiUrl,
+      buildRequestOpts(httpRequest, {
+        method: 'GET',
+        headers: {
+          'User-Agent': 'DeepEvil/1.0 (Global Research Engine)',
+          'Accept-Language': GLOBAL_ACCEPT_LANGUAGE
+        },
+        headersTimeout: timeoutMs,
+        bodyTimeout: timeoutMs,
+        signal
+      })
+    );
+    if (res.statusCode !== 200) {
+      await drainBody(res);
+      return [];
+    }
+    const data = await res.body.json();
+    const pages = Object.values(data?.query?.pages || {}).sort((a, b) => (a.index || 99) - (b.index || 99));
+    const queryLower = stripped.toLowerCase();
+
+    return pages
+      .filter((p) => {
+        const ptTitle = String(p?.title || '').toLowerCase();
+        const enTitle = String(p?.langlinks?.[0]?.['*'] || '').toLowerCase();
+        if (!enTitle) return false;
+        if (/\b(band|album|film|song|discography|record label|napalm death|napalm records)\b/i.test(enTitle)) {
+          return false;
+        }
+        const titleWords = ptTitle.split(/\s+/).filter((w) => w.length >= 4);
+        return titleWords.length === 0 || titleWords.some((w) => queryLower.includes(w));
+      })
+      .map((p) => p.langlinks[0]['*'])
+      .slice(0, 1);
+  } catch (_) {
+    return [];
   }
 }
 
-const COUNTRY_CODE_TO_ACADEMIC_CONTEXT = {
-  US: 'United States',
-  CN: 'China',
-  DE: 'Germany',
-  JP: 'Japan',
-  KR: 'South Korea',
-  RU: 'Russia',
-  BR: 'Brazil'
-};
-
 /**
- * Fallback acadêmico resiliente via CrossRef Polite Pool API (50 req/s gratuitos sem chave)
- * acionado automaticamente quando o orçamento diário por IP do OpenAlex (HTTP 429) é atingido.
+ * Fallback acadêmico endurecido via CrossRef Polite Pool API (exige >= 2 tokens ou >= 50% + filtro de ano).
  */
 async function searchCrossRefAcademicFallback(cleanQuery, {
   httpRequest = request,
-  timeoutMs = 4500,
+  timeoutMs = 3500,
   count = 3,
   countryCode = '',
   countryPole = '',
   countryBadge = '',
   requiredTokens = [],
-  callsignMatches = []
+  callsignMatches = [],
+  minYear = null,
+  signal = null
 } = {}) {
+  if (signal?.aborted) return [];
   const countryHint = COUNTRY_CODE_TO_ACADEMIC_CONTEXT[countryCode] || '';
   const effectiveQuery = countryHint ? `${cleanQuery} ${countryHint}` : cleanQuery;
   const fetchRows = Math.max(count * 3, 8);
-  const apiUrl = `https://api.crossref.org/works?query=${encodeURIComponent(effectiveQuery)}&rows=${fetchRows}&select=DOI,title,URL,abstract,published,container-title,publisher,author`;
+  const yearFilter = Number.isInteger(minYear) ? `&filter=from-pub-date:${minYear}` : '';
+  const apiUrl = `https://api.crossref.org/works?query=${encodeURIComponent(effectiveQuery)}${yearFilter}&rows=${fetchRows}&select=DOI,title,URL,abstract,published,container-title,publisher,author`;
 
   try {
-    const res = await httpRequest(apiUrl, {
-      method: 'GET',
-      headers: {
-        'User-Agent': 'DeepEvil/1.0 (https://github.com/eriktonon/deep-evil; mailto:research@deepevil.org)',
-        'Accept': 'application/json'
-      },
-      headersTimeout: timeoutMs,
-      bodyTimeout: timeoutMs
-    });
-    if (res.statusCode !== 200) return [];
+    const res = await httpRequest(
+      apiUrl,
+      buildRequestOpts(httpRequest, {
+        method: 'GET',
+        headers: {
+          'User-Agent': 'DeepEvil/1.0 (https://github.com/eriktonon/deep-evil; mailto:research@deepevil.org)',
+          'Accept': 'application/json'
+        },
+        headersTimeout: timeoutMs,
+        bodyTimeout: timeoutMs,
+        signal
+      })
+    );
+    if (res.statusCode !== 200) {
+      await drainBody(res);
+      return [];
+    }
     const data = await res.body.json();
     const items = Array.isArray(data?.message?.items) ? data.message.items : [];
     const candidates = [];
     const prefix = countryBadge ? `${countryBadge} ` : '';
 
     for (const item of items) {
-      const rawTitle = Array.isArray(item?.title) && item.title[0] ? String(item.title[0]).replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim() : '';
+      const rawTitle = Array.isArray(item?.title) && item.title[0]
+        ? String(item.title[0]).replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()
+        : '';
       const rawUrl = item?.URL || (item?.DOI ? `https://doi.org/${item.DOI}` : '');
       if (!rawTitle || !rawUrl || !String(rawUrl).startsWith('http')) continue;
 
       const rawAbstract = String(item?.abstract || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-      const hay = `${rawTitle} ${rawAbstract}`.replace(/[\u2010-\u2015\u2212]/g, '-');
+      const hay = normalizeHyphens(`${rawTitle} ${rawAbstract}`);
 
-      // Polos internacionais não aceitam títulos redigidos em português
       if (countryPole && countryPole !== 'BR' && /[ãõç]/i.test(hay) && /\b(para|como|sobre|pelos|pelas|entre|estudo|análise|avaliação|brasileir[oa])\b/i.test(hay)) {
         continue;
       }
 
-      if (callsignMatches.length > 0 && httpRequest === request) {
-        const lowerHay = hay.toLowerCase();
-        const matchesCallsign = callsignMatches.some((cs) => {
-          const [prefixPart, numPart] = cs.split('-');
-          const csRegex = new RegExp(`\\b${prefixPart}[-\\s]?${numPart}\\b`, 'i');
-          return csRegex.test(lowerHay);
-        });
-        if (!matchesCallsign) continue;
+      if (callsignMatches.length > 0 && httpRequest === request && !matchesAnyCallsign(hay, callsignMatches)) {
+        continue;
       }
 
-      if (requiredTokens.length > 0) {
-        const lowerHay = hay.toLowerCase();
-        const hasTopicMatch = requiredTokens.some((tok) => lowerHay.includes(tok));
-        if (!hasTopicMatch) continue;
+      if (requiredTokens.length > 0 && !passesStrictTokenOverlap(hay, requiredTokens, { minTokens: 2, minRatio: 0.5 })) {
+        continue;
       }
 
       const yearParts = item?.published?.['date-parts']?.[0];
-      const year = Array.isArray(yearParts) && yearParts[0] ? ` (${yearParts[0]})` : '';
+      const publishedYear = Array.isArray(yearParts) && Number.isInteger(yearParts[0]) ? yearParts[0] : null;
+      if (Number.isInteger(minYear) && publishedYear && publishedYear < minYear) {
+        continue;
+      }
+
+      const year = publishedYear ? ` (${publishedYear})` : '';
       const venueName = (Array.isArray(item?.['container-title']) && item['container-title'][0]) || item?.publisher || '';
       const venue = venueName ? ` [${venueName}]` : '';
       const affName = item?.author?.[0]?.affiliation?.[0]?.name || '';
@@ -1422,7 +460,10 @@ async function searchCrossRefAcademicFallback(cleanQuery, {
         url: String(rawUrl),
         title: `${prefix}${rawTitle}${year}${venue}${instTag}`,
         description,
-        countryPole: countryPole || countryCode || 'GLOBAL'
+        publishedYear,
+        countryPole: countryPole || countryCode || 'GLOBAL',
+        engine: 'crossref',
+        engineRank: candidates.length + 1
       });
       if (candidates.length >= count) break;
     }
@@ -1433,49 +474,59 @@ async function searchCrossRefAcademicFallback(cleanQuery, {
 }
 
 /**
- * Pesquisa literatura científica e de engenharia global via OpenAlex API (250M+ artigos IEEE, ACM, ArXiv, Springer, Nature, ScienceDirect),
- * suportando filtro geopolítico por código de país da instituição (`US`, `CN`, `DE`, `JP`, `KR`, `RU`, `BR`) e fallback automático para CrossRef Polite Pool.
+ * Pesquisa literatura científica global via OpenAlex API endurecida:
+ * exige >= 2 tokens distintos (ou >= 50%) + filtro temporal quando aplicável + TTL cache 5min.
  */
 async function searchOpenAlexGlobal(query, {
   httpRequest = request,
-  timeoutMs = 4500,
+  timeoutMs = 3500,
   count = 4,
   countryCode = '',
   countryPole = '',
-  countryBadge = ''
+  countryBadge = '',
+  minYear = null,
+  signal = null
 } = {}) {
-  const cleanQuery = String(query || '')
-    .replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-')
-    .trim();
+  if (signal?.aborted) return [];
+  const cleanQuery = normalizeHyphens(query).trim();
   if (!cleanQuery) return [];
 
-  const cacheKey = `${countryCode}::${countryPole}::${count}::${cleanQuery}`;
-  if (httpRequest === request && academicSearchCache.has(cacheKey)) {
-    return academicSearchCache.get(cacheKey);
+  const cacheKey = `${countryCode}::${countryPole}::${count}::${minYear || ''}::${cleanQuery}`;
+  if (httpRequest === request) {
+    const cached = academicSearchCache.get(cacheKey);
+    if (cached !== undefined) return cached;
   }
 
-  // Detecta callsigns/códigos alfanuméricos hifenizados (ex.: UVB-76, T-15MD, SU-57) para impedir colisão com siglas de biologia/direito
   const callsignMatches = [...cleanQuery.matchAll(/\b([A-Za-z]{2,5}-\d{1,5})\b/g)].map((m) => m[1].toLowerCase());
-
-  const requiredTokens = cleanQuery
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
-    .split(/\s+/)
-    .filter((w) => (w.length >= 4 || /^[a-z]{2,5}-\d{1,5}$/i.test(w)) && !/^(como|visto|mundo|qual|quais|sobre|para|pela|pelo|world|seen|global|international|foreign|policy|relations|diplomacy|perception|analysis|study|research|science|system|systems|architecture|development|contemporary|modern|model|models|large|data|open|source|code|engineering|sustainable|urban|planning|compact|cities|soviet|russian|russia|china|chinese|website|site)$/i.test(w));
+  const requiredTokens = [...new Set(
+    cleanQuery
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
+      .split(/\s+/)
+      .filter((w) => (w.length >= 4 || /^[a-z]{2,5}-\d{1,5}$/i.test(w)) && !/^(como|visto|mundo|qual|quais|sobre|para|pela|pelo|world|seen|global|international|foreign|policy|relations|diplomacy|perception|analysis|study|research|science|system|systems|architecture|development|contemporary|modern|model|models|large|data|open|source|code|engineering|sustainable|urban|planning|compact|cities|soviet|russian|russia|china|chinese|website|site)$/i.test(w))
+  )];
 
   try {
-    const fetchCount = Math.max(count * 2, 6);
-    const filterParam = countryCode ? `&filter=institutions.country_code:${encodeURIComponent(countryCode)}` : '';
+    const fetchCount = Math.max(count * 3, 8);
+    const filters = [];
+    if (countryCode) filters.push(`institutions.country_code:${encodeURIComponent(countryCode)}`);
+    if (Number.isInteger(minYear)) filters.push(`from_publication_date:${minYear}-01-01`);
+    const filterParam = filters.length > 0 ? `&filter=${filters.join(',')}` : '';
     const apiUrl = `https://api.openalex.org/works?search=${encodeURIComponent(cleanQuery)}${filterParam}&per-page=${fetchCount}`;
-    const res = await httpRequest(apiUrl, {
-      method: 'GET',
-      headers: {
-        'User-Agent': 'DeepEvil/1.0 (https://github.com/eriktonon/deep-evil; mailto:research@deepevil.org)',
-        'Accept': 'application/json'
-      },
-      headersTimeout: timeoutMs,
-      bodyTimeout: timeoutMs
-    });
+
+    const res = await httpRequest(
+      apiUrl,
+      buildRequestOpts(httpRequest, {
+        method: 'GET',
+        headers: {
+          'User-Agent': 'DeepEvil/1.0 (https://github.com/eriktonon/deep-evil; mailto:research@deepevil.org)',
+          'Accept': 'application/json'
+        },
+        headersTimeout: timeoutMs,
+        bodyTimeout: timeoutMs,
+        signal
+      })
+    );
 
     if (res.statusCode === 200) {
       const data = await res.body.json();
@@ -1484,7 +535,6 @@ async function searchOpenAlexGlobal(query, {
 
       for (const w of works) {
         if (!w?.title) continue;
-        // Polos internacionais (US, CN, DE, JP, KR, RU) não devem retornar papers em português de coautores brasileiros desconexos
         if (countryPole && countryPole !== 'BR' && String(w.language || '').toLowerCase() === 'pt') {
           continue;
         }
@@ -1496,24 +546,22 @@ async function searchOpenAlexGlobal(query, {
         if (!targetUrl || !String(targetUrl).startsWith('http')) continue;
 
         const abstractText = reconstructOpenAlexAbstract(w.abstract_inverted_index);
-        const hay = `${w.title} ${abstractText}`.replace(/[\u2010-\u2015\u2212]/g, '-').toLowerCase();
+        const hay = normalizeHyphens(`${w.title} ${abstractText}`);
 
-        // Se a query busca um callsign específico (ex.: UVB-76), exige que o callsign apareça junto no artigo (bloqueando "UVB epidermis" ou "UVB p. 76")
-        if (callsignMatches.length > 0 && httpRequest === request) {
-          const matchesCallsign = callsignMatches.some((cs) => {
-            const [prefixPart, numPart] = cs.split('-');
-            const csRegex = new RegExp(`\\b${prefixPart}[-\\s]?${numPart}\\b`, 'i');
-            return csRegex.test(hay);
-          });
-          if (!matchesCallsign) continue;
+        if (callsignMatches.length > 0 && httpRequest === request && !matchesAnyCallsign(hay, callsignMatches)) {
+          continue;
         }
 
-        if (requiredTokens.length > 0) {
-          const hasTopicMatch = requiredTokens.some((tok) => hay.includes(tok));
-          if (!hasTopicMatch) continue;
+        if (requiredTokens.length > 0 && !passesStrictTokenOverlap(hay, requiredTokens, { minTokens: 2, minRatio: 0.5 })) {
+          continue;
         }
 
-        const year = w.publication_year ? ` (${w.publication_year})` : '';
+        const publishedYear = Number.isInteger(w.publication_year) ? w.publication_year : null;
+        if (Number.isInteger(minYear) && publishedYear && publishedYear < minYear) {
+          continue;
+        }
+
+        const year = publishedYear ? ` (${publishedYear})` : '';
         const venue = w?.primary_location?.source?.display_name ? ` [${w.primary_location.source.display_name}]` : '';
         const instName = w?.authorships?.[0]?.institutions?.[0]?.display_name || '';
         const instTag = instName ? ` — ${instName}` : '';
@@ -1526,26 +574,26 @@ async function searchOpenAlexGlobal(query, {
           url: String(targetUrl),
           title: `${prefix}${w.title}${year}${venue}${instTag}`,
           description,
-          countryPole: countryPole || countryCode || 'GLOBAL'
+          publishedYear,
+          countryPole: countryPole || countryCode || 'GLOBAL',
+          engine: 'openalex',
+          engineRank: candidates.length + 1
         });
         if (candidates.length >= count) break;
       }
 
       if (candidates.length > 0) {
         if (httpRequest === request) {
-          if (academicSearchCache.size > 400) academicSearchCache.clear();
           academicSearchCache.set(cacheKey, candidates);
         }
         return candidates;
       }
-    } else if (res.body && typeof res.body.dump === 'function') {
-      await res.body.dump().catch(() => {});
+    } else {
+      await drainBody(res);
     }
-  } catch (_) {
-    // Segue para o fallback CrossRef
-  }
+  } catch (_) {}
 
-  if (httpRequest !== request) return [];
+  if (httpRequest !== request || signal?.aborted) return [];
 
   const crossRefCandidates = await searchCrossRefAcademicFallback(cleanQuery, {
     httpRequest,
@@ -1555,43 +603,52 @@ async function searchOpenAlexGlobal(query, {
     countryPole,
     countryBadge,
     requiredTokens,
-    callsignMatches
+    callsignMatches,
+    minYear,
+    signal
   });
   if (crossRefCandidates.length > 0) {
-    if (academicSearchCache.size > 400) academicSearchCache.clear();
     academicSearchCache.set(cacheKey, crossRefCandidates);
   }
   return crossRefCandidates;
 }
 
 /**
- * Pesquisa artigos técnicos, benchmarks de IA, segurança e engenharia de sistemas na Rússia
- * via feed oficial de busca do Habr (`habr.com/ru/rss/search/`).
+ * Pesquisa artigos técnicos na Rússia via feed RSS do Habr (usando linkedom DOMParser).
  */
 async function searchHabrRussia(query, {
   httpRequest = request,
-  timeoutMs = 4500,
+  timeoutMs = 3500,
   count = 3,
-  fallbackQuery = ''
+  fallbackQuery = '',
+  signal = null
 } = {}) {
+  if (signal?.aborted) return [];
   const cleanQuery = String(query || fallbackQuery || '').trim();
   if (!cleanQuery) return [];
 
   try {
     const rssUrl = `https://habr.com/ru/rss/search/?q=${encodeURIComponent(cleanQuery)}&order_by=relevance&target_type=posts&hl=ru&fl=ru`;
-    const res = await httpRequest(rssUrl, {
-      method: 'GET',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36',
-        'Accept': 'application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8'
-      },
-      headersTimeout: timeoutMs,
-      bodyTimeout: timeoutMs
-    });
-    if (res.statusCode !== 200) return [];
+    const res = await httpRequest(
+      rssUrl,
+      buildRequestOpts(httpRequest, {
+        method: 'GET',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36',
+          'Accept': 'application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8'
+        },
+        headersTimeout: timeoutMs,
+        bodyTimeout: timeoutMs,
+        signal
+      })
+    );
+    if (res.statusCode !== 200) {
+      await drainBody(res);
+      return [];
+    }
     const xml = await res.body.text();
-    const dom = new JSDOM(xml, { contentType: 'text/xml' });
-    const items = [...dom.window.document.querySelectorAll('item')].slice(0, count);
+    const doc = new DOMParser().parseFromString(xml, 'text/xml');
+    const items = [...doc.querySelectorAll('item')].slice(0, count);
     const candidates = [];
 
     for (const item of items) {
@@ -1606,10 +663,10 @@ async function searchHabrRussia(query, {
       candidates.push({
         url: cleanUrl,
         title: `[🇷🇺 RU] ${rawTitle} — Habr Engineering`,
-        description: rawDesc.length >= 60
-          ? `[🇷🇺 RU Habr] ${rawDesc}`
-          : `[🇷🇺 RU Habr] ${rawTitle} — Russian technical analysis and engineering benchmark on Habr.`,
-        countryPole: 'RU'
+        description: rawDesc.length >= 40 ? `[🇷🇺 RU Habr] ${rawDesc}` : `[🇷🇺 RU Habr] ${rawTitle}`,
+        countryPole: 'RU',
+        engine: 'habr',
+        engineRank: candidates.length + 1
       });
     }
     return candidates;
@@ -1619,18 +676,19 @@ async function searchHabrRussia(query, {
 }
 
 /**
- * Motor de busca Yandex + Runet (Polo 🇷🇺 Rússia) com cascata resiliente em 3 camadas:
- *  - Tier 1: Yandex Cloud Search XML API oficial (`YANDEX_API_KEY` + `YANDEX_FOLDER_ID`)
- *  - Tier 2: Yandex Web Search HTML (`https://yandex.com/search/?text=...&lr=213`) com guarda anti-SmartCaptcha (`302 /showcaptcha`)
- *  - Tier 3: CyberLeninka Runet Open Science JSON API (`POST https://cyberleninka.ru/api/search`, 4M+ artigos científicos russos)
+ * Motor Yandex + Runet (Polo 🇷🇺 Rússia) com cascata 3-Tier (XML API -> Yandex Web -> CyberLeninka quando allowAcademic !== false).
  */
 async function searchYandexRussia(query, {
   httpRequest = request,
-  timeoutMs = 4500,
+  timeoutMs = 3500,
   count = 3,
   fallbackQuery = '',
-  env = process.env
+  env = process.env,
+  allowAcademic = true,
+  minYear = null,
+  signal = null
 } = {}) {
+  if (signal?.aborted) return [];
   const cleanQuery = String(query || fallbackQuery || '')
     .replace(/\s+OR\s+.+$/i, '')
     .replace(/\s+/g, ' ')
@@ -1640,23 +698,27 @@ async function searchYandexRussia(query, {
   const yandexApiKey = String(env?.YANDEX_API_KEY || '').trim();
   const yandexFolderId = String(env?.YANDEX_FOLDER_ID || '').trim();
 
-  // Tier 1: Yandex Cloud Search XML API (quando autenticado)
+  // Tier 1: Yandex Cloud Search XML API
   if (yandexApiKey && yandexFolderId) {
     try {
       const xmlUrl = `https://yandex.com/search/xml?folderid=${encodeURIComponent(yandexFolderId)}&apikey=${encodeURIComponent(yandexApiKey)}&query=${encodeURIComponent(cleanQuery)}&l10n=en&filter=none`;
-      const xmlRes = await httpRequest(xmlUrl, {
-        method: 'GET',
-        headers: {
-          'User-Agent': 'DeepEvil-Homelab-Search/2.0',
-          'Accept': 'application/xml, text/xml'
-        },
-        headersTimeout: timeoutMs,
-        bodyTimeout: timeoutMs
-      });
+      const xmlRes = await httpRequest(
+        xmlUrl,
+        buildRequestOpts(httpRequest, {
+          method: 'GET',
+          headers: {
+            'User-Agent': 'DeepEvil-Homelab-Search/2.0',
+            'Accept': 'application/xml, text/xml'
+          },
+          headersTimeout: timeoutMs,
+          bodyTimeout: timeoutMs,
+          signal
+        })
+      );
       if (xmlRes.statusCode === 200) {
         const xmlText = await xmlRes.body.text();
-        const dom = new JSDOM(xmlText, { contentType: 'text/xml' });
-        const docs = [...dom.window.document.querySelectorAll('doc')].slice(0, count);
+        const xmlDoc = new DOMParser().parseFromString(xmlText, 'text/xml');
+        const docs = [...xmlDoc.querySelectorAll('doc')].slice(0, count);
         const xmlCandidates = [];
         for (const docNode of docs) {
           const url = String(docNode.querySelector('url')?.textContent || '').trim();
@@ -1669,40 +731,44 @@ async function searchYandexRussia(query, {
           xmlCandidates.push({
             url,
             title: `[🇷🇺 RU] ${title} — Yandex Search`,
-            description: passage.length >= 40
-              ? `[🇷🇺 RU Yandex] ${passage}`
-              : `[🇷🇺 RU Yandex] ${title} — Indexed by Yandex Runet Search.`,
-            countryPole: 'RU'
+            description: passage.length >= 40 ? `[🇷🇺 RU Yandex] ${passage}` : `[🇷🇺 RU Yandex] ${title}`,
+            countryPole: 'RU',
+            engine: 'yandex',
+            engineRank: xmlCandidates.length + 1
           });
         }
         if (xmlCandidates.length > 0) return xmlCandidates;
+      } else {
+        await drainBody(xmlRes);
       }
-    } catch (_) {
-      // prossegue para Tier 2
-    }
+    } catch (_) {}
   }
 
-  // Tier 2: Yandex Web HTML Parser com detecção instantânea de SmartCaptcha (302 /showcaptcha)
+  // Tier 2: Yandex Web HTML Parser (com linkedom e guarda SmartCaptcha)
   try {
-    const yandexHtmlTimeout = Math.min(timeoutMs, 2500);
+    const yandexHtmlTimeout = Math.min(timeoutMs, 2200);
     const yandexWebUrl = `https://yandex.com/search/?text=${encodeURIComponent(cleanQuery)}&lr=213`;
-    const webRes = await httpRequest(yandexWebUrl, {
-      method: 'GET',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7'
-      },
-      headersTimeout: yandexHtmlTimeout,
-      bodyTimeout: yandexHtmlTimeout
-    });
+    const webRes = await httpRequest(
+      yandexWebUrl,
+      buildRequestOpts(httpRequest, {
+        method: 'GET',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7'
+        },
+        headersTimeout: yandexHtmlTimeout,
+        bodyTimeout: yandexHtmlTimeout,
+        signal
+      })
+    );
 
     const redirectLoc = String(webRes.headers?.location || '');
     if (webRes.statusCode === 200 && !/showcaptcha|smartcaptcha/i.test(redirectLoc)) {
       const html = await webRes.body.text();
       if (html && !/showcaptcha|SmartCaptcha|CheckboxCaptcha/i.test(html)) {
-        const dom = new JSDOM(html);
-        const items = [...dom.window.document.querySelectorAll('li.serp-item, .serp-item')];
+        const { document } = parseHTML(html);
+        const items = [...document.querySelectorAll('li.serp-item, .serp-item')];
         const webCandidates = [];
         for (const item of items) {
           if (webCandidates.length >= count) break;
@@ -1717,53 +783,67 @@ async function searchYandexRussia(query, {
           webCandidates.push({
             url: href,
             title: `[🇷🇺 RU] ${rawTitle} — Yandex Search`,
-            description: rawSnippet.length >= 40
-              ? `[🇷🇺 RU Yandex] ${rawSnippet}`
-              : `[🇷🇺 RU Yandex] ${rawTitle} — Indexed via Yandex Runet Search.`,
-            countryPole: 'RU'
+            description: rawSnippet.length >= 40 ? `[🇷🇺 RU Yandex] ${rawSnippet}` : `[🇷🇺 RU Yandex] ${rawTitle}`,
+            countryPole: 'RU',
+            engine: 'yandex',
+            engineRank: webCandidates.length + 1
           });
         }
         if (webCandidates.length > 0) return webCandidates;
       }
+    } else {
+      await drainBody(webRes);
     }
-  } catch (_) {
-    // prossegue para Tier 3 (CyberLeninka Runet JSON API)
+  } catch (_) {}
+
+  if (!allowAcademic || signal?.aborted) {
+    return [];
   }
 
-  // Tier 3: CyberLeninka Runet Open Science JSON API (keyless, HTTP 200 ~220ms, 4M+ artigos científicos russos)
-  const normalizedClean = cleanQuery.replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-');
+  // Tier 3: CyberLeninka Runet Open Science JSON API (endurecido: >= 2 tokens ou >= 50%, filtro de ano)
+  const normalizedClean = normalizeHyphens(cleanQuery);
   const queryAttempts = [normalizedClean];
-  const cleanFallback = String(fallbackQuery || '').replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-').replace(/\s+/g, ' ').trim();
+  const cleanFallback = normalizeHyphens(fallbackQuery).replace(/\s+/g, ' ').trim();
   if (cleanFallback && cleanFallback.toLowerCase() !== normalizedClean.toLowerCase()) {
     queryAttempts.push(cleanFallback);
   }
 
   for (const qAttempt of queryAttempts) {
+    if (signal?.aborted) break;
     try {
       const callsigns = [...qAttempt.matchAll(/\b([A-Za-zА-Яа-яЁё]{2,5}-\d{1,5})\b/g)].map((m) => m[1].toLowerCase());
-      const contentTokens = qAttempt
-        .toLowerCase()
-        .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
-        .split(/\s+/)
-        .filter((t) => t.length >= 4 && !/^(россия|россии|мир|мире|что|как|для|или|russia|russian|world|global)$/i.test(t));
+      const contentTokens = [...new Set(
+        qAttempt
+          .toLowerCase()
+          .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
+          .split(/\s+/)
+          .filter((t) => t.length >= 4 && !/^(россия|россии|мир|мире|что|как|для|или|russia|russian|world|global)$/i.test(t))
+      )];
 
-      const clRes = await httpRequest('https://cyberleninka.ru/api/search', {
-        method: 'POST',
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36',
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({
-          mode: 'articles',
-          q: qAttempt,
-          size: Math.max(count * 2, 5),
-          from: 0
-        }),
-        headersTimeout: timeoutMs,
-        bodyTimeout: timeoutMs
-      });
-      if (clRes.statusCode !== 200) continue;
+      const clRes = await httpRequest(
+        'https://cyberleninka.ru/api/search',
+        buildRequestOpts(httpRequest, {
+          method: 'POST',
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36',
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({
+            mode: 'articles',
+            q: qAttempt,
+            size: Math.max(count * 3, 6),
+            from: 0
+          }),
+          headersTimeout: timeoutMs,
+          bodyTimeout: timeoutMs,
+          signal
+        })
+      );
+      if (clRes.statusCode !== 200) {
+        await drainBody(clRes);
+        continue;
+      }
       const data = await clRes.body.json();
       const articles = Array.isArray(data?.articles) ? data.articles : [];
       const candidates = [];
@@ -1780,26 +860,25 @@ async function searchYandexRussia(query, {
           .replace(/\s+/g, ' ')
           .trim();
 
-        const hay = `${rawName} ${rawAnnotation}`.replace(/[\u2010-\u2015\u2212]/g, '-').toLowerCase();
+        const publishedYear = Number.isInteger(Number(art?.year)) ? Number(art.year) : null;
+        if (Number.isInteger(minYear) && publishedYear && publishedYear < minYear) {
+          continue;
+        }
 
-        // Impede falsos positivos por colisão de sigla (ex.: "УВБ-76" batendo em "УВБ СИФО" de contabilidade ou genética suína)
+        const hay = normalizeHyphens(`${rawName} ${rawAnnotation}`);
         if (httpRequest === request) {
-          if (callsigns.length > 0) {
-            const hasCallsign = callsigns.some((cs) => {
-              const [p, n] = cs.split('-');
-              return new RegExp(`(?:^|[^\\p{L}\\p{N}])${p}[-\\s]?${n}(?:$|[^\\p{L}\\p{N}])`, 'iu').test(hay);
-            });
-            if (!hasCallsign) continue;
-          } else if (contentTokens.length > 0) {
-            const hasToken = contentTokens.some((tok) => hay.includes(tok.slice(0, Math.max(4, tok.length - 2))));
-            if (!hasToken) continue;
+          if (callsigns.length > 0 && !matchesAnyCallsign(hay, callsigns)) {
+            continue;
+          }
+          if (contentTokens.length > 0 && !passesStrictTokenOverlap(hay, contentTokens, { minTokens: 2, minRatio: 0.5 })) {
+            continue;
           }
         }
 
         const fullUrl = /^https?:\/\//i.test(rawLink)
           ? rawLink
           : `https://cyberleninka.ru${rawLink.startsWith('/') ? '' : '/'}${rawLink}`;
-        const year = art?.year ? String(art.year) : 'Runet';
+        const year = publishedYear ? String(publishedYear) : 'Runet';
         const journal = String(art?.journal || '').replace(/<[^>]+>/g, '').trim();
         const authors = Array.isArray(art?.authors) && art.authors.length > 0
           ? ` (${art.authors.slice(0, 2).join(', ')})`
@@ -1811,43 +890,38 @@ async function searchYandexRussia(query, {
           description: rawAnnotation.length >= 60
             ? `${metaPrefix} ${rawAnnotation}${authors}`
             : `${metaPrefix} ${rawName}${authors} — Peer-reviewed Russian scientific article indexed in CyberLeninka Runet.`,
-          countryPole: 'RU'
+          publishedYear,
+          countryPole: 'RU',
+          engine: 'cyberleninka',
+          engineRank: candidates.length + 1
         });
       }
 
       if (candidates.length > 0) return candidates;
-    } catch (_) {
-      // tenta próximo fallback
-    }
-  }
-
-  // Tier 4: Complemento automático via Habr Runet RSS para entidades técnicas/rádio/engenharia na Rússia (ex.: УВБ-76)
-  if (httpRequest === request) {
-    const habrFallback = await searchHabrRussia(normalizedClean, {
-      httpRequest,
-      timeoutMs,
-      count,
-      fallbackQuery: cleanFallback
-    });
-    if (habrFallback.length > 0) return habrFallback;
+    } catch (_) {}
   }
 
   return [];
 }
 
 /**
- * Pesquisa enciclopédica técnica diretamente em um idioma/polo específico (`en`, `zh`, `de`, `ja`, `ko`, `ru`, `pt`)
- * com controle de concorrência gentil (Wikimedia Polite Pool) e cache em memória.
+ * Pesquisa enciclopédica na Wikipedia por idioma (`en`, `zh`, `de`, `ja`, `ko`, `ru`, `pt`):
+ * - Em produção usa `generator=search&prop=pageprops|extracts&ppprop=wikibase_item` para obter
+ *   `wikidataId` (QID) real em 1 chamada HTTP, permitindo deduplicação cross-lingual exata!
+ * - NUNCA degrada para 1 token solto genérico!
+ * - Exige overlap mínimo de relevância com a query real (jamais retorna "Guerra do Vietnã" ou "Traidor (jogo)"!).
  */
 async function searchWikipediaByLang(query, lang = 'en', {
   httpRequest = request,
-  timeoutMs = 4500,
+  timeoutMs = 3500,
   count = 3,
   countryPole = '',
-  countryBadge = ''
+  countryBadge = '',
+  canonicalEntity = '',
+  signal = null
 } = {}) {
-  const cleanQuery = String(query || '')
-    .replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-')
+  if (signal?.aborted) return [];
+  const cleanQuery = normalizeHyphens(query)
     .replace(/\s+OR\s+.+$/i, '')
     .replace(/_/g, ' ')
     .replace(/\s+/g, ' ')
@@ -1855,68 +929,57 @@ async function searchWikipediaByLang(query, lang = 'en', {
   if (!cleanQuery) return [];
 
   const cacheKey = `${lang}::${countryPole}::${count}::${cleanQuery}`;
-  if (httpRequest === request && wikiSearchCache.has(cacheKey)) {
-    return wikiSearchCache.get(cacheKey);
+  if (httpRequest === request) {
+    const cached = wikiSearchCache.get(cacheKey);
+    if (cached !== undefined) return cached;
   }
 
   const condenseWikiQuery = (q) => {
-    // Preserva callsigns alfanuméricos hifenizados como UVB-76, УВБ-76, GPT-4, T-15MD, SHA-256
-    const stripped = String(q || '')
-      .replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-')
+    const stripped = normalizeHyphens(q)
       .replace(/([A-Za-z\u00C0-\u024F]{4,})-([A-Za-z\u00C0-\u024F]{4,})/g, '$1 $2')
       .replace(/([A-Za-z0-9]+)([\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7af])/g, '$1 $2')
       .replace(/([\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7af])([A-Za-z0-9]+)/g, '$1 $2')
-      .replace(/における|について|に関する|中的|关于|에서의|에 대한|架构|アーキテクチャ|아키텍처/g, ' ')
+      .replace(/における|について|に関する|中的|关于|에서의|에 대한/g, ' ')
       .replace(/[、。，・]/g, ' ')
-      .replace(/\b(and|or|in|of|the|for|with|on|to|und|oder|in|der|die|das|den|dem|des|von|für|mit|и|или|в|на|для|с|по|о|об|e|ou|de|da|do|das|dos|em|no|na|nos|nas|para|por|com|esse|essa|este|esta|site|website|arquitetura|architecture|architektur|архитектура|hist[óo]ria|history|geschichte|история|cadeias?|globais?|global)\b/gi, ' ')
+      .replace(/\b(and|or|in|of|the|for|with|on|to|und|oder|der|die|das|den|dem|des|von|für|mit|и|или|в|на|для|с|по|о|об|e|ou|de|da|do|das|dos|em|no|na|nos|nas|para|por|com|esse|essa|este|esta|site|website|hoje|today|agora|now|mapa|map)\b/gi, ' ')
       .replace(/\s+/g, ' ')
       .trim();
     const parts = stripped.split(/\s+/).filter(Boolean);
-    if (parts.length > 4) {
-      return parts.slice(0, 4).join(' ');
-    }
-    if (parts.length <= 2 && /[\u3040-\u30ff\u4e00-\u9fff]/.test(stripped) && stripped.length > 5) {
-      const subParts = stripped
-        .replace(/操作系统/g, ' 操作系统 ')
-        .replace(/微内核/g, ' 微内核 ')
-        .replace(/形式化验证/g, ' 形式化验证 ')
-        .split(/[\sとやのはがをにでへも和与及在的]+/)
-        .filter((s) => s.length >= 2);
-      if (subParts.length > 0) return subParts.slice(0, 2).join(' ');
-    }
-    return stripped;
+    return parts.slice(0, 4).join(' ');
   };
 
-  const GENERIC_SINGLE_WIKI_TOKENS = /^(esse|essa|este|esta|site|website|world|mundo|end|fim|played|tocou|radio|russia|russian|russland|россия|china|chinese|brazil|brasil|competitor|concorrente|alternative|blocked|bloqueado|overview)$/i;
+  const queryCallsigns = [...cleanQuery.matchAll(/\b([A-Za-zА-Яа-яЁё]{2,5}-\d{1,5})\b/g)].map((m) => m[1].toLowerCase());
+  const meaningfulTokens = [...new Set(
+    condenseWikiQuery(cleanQuery)
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
+      .split(/\s+/)
+      .filter((t) => (t.length >= 3 || /[\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7af]{2}/.test(t)) && !/^(war|guerra|conflito|conflict|hoje|today|site|world|mundo|russia|china|brazil|brasil|software|linux|tool|tools|alternative|competitor|concorrente)$/i.test(t))
+  )];
 
   const runFetch = async () => {
+    // Sem degradação destrutiva para 1 token genérico! Só tenta a query original e a versão condensada (>= 2 tokens ou callsign/CJK).
     const queryVariants = [cleanQuery];
     const condensed = condenseWikiQuery(cleanQuery);
-    if (condensed && condensed !== cleanQuery) {
+    const condensedParts = condensed.split(/\s+/).filter(Boolean);
+    if (
+      condensed &&
+      condensed.toLowerCase() !== cleanQuery.toLowerCase() &&
+      (condensedParts.length >= 2 || queryCallsigns.length > 0 || /[\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7af]{2}/.test(condensed))
+    ) {
       queryVariants.push(condensed);
-    }
-    const tokens = condensed.split(/\s+/).filter((t) => t.length >= 2 && !GENERIC_SINGLE_WIKI_TOKENS.test(t));
-    if (tokens.length >= 2) {
-      const twoWord = tokens.slice(0, 2).join(' ');
-      if (twoWord && !queryVariants.includes(twoWord)) {
-        queryVariants.push(twoWord);
-      }
-    }
-    // Só tenta token único se for um identificador específico (ex.: UVB-76, Tokamak, Palantir) ou termo CJK composto
-    const specificSingleTokens = tokens.filter(
-      (t) => !GENERIC_SINGLE_WIKI_TOKENS.test(t) && (/^[A-Za-zА-Яа-яЁё]{2,5}-\d{1,5}$/.test(t) || /[\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7af]/.test(t) || t.length >= 6)
-    );
-    for (const singleTok of specificSingleTokens.slice(0, 2)) {
-      if (!queryVariants.includes(singleTok)) {
-        queryVariants.push(singleTok);
-      }
     }
 
     for (const qVariant of queryVariants) {
-      const apiUrl = `https://${lang}.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(qVariant)}&utf8=&format=json&srlimit=${count}`;
-      for (let attempt = 1; attempt <= 2; attempt++) {
-        try {
-          const res = await httpRequest(apiUrl, {
+      if (signal?.aborted) return [];
+      const apiUrl = httpRequest === request
+        ? `https://${lang}.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(qVariant)}&gsrlimit=${count}&prop=pageprops|extracts&ppprop=wikibase_item&exintro=1&explaintext=1&exchars=320&redirects=1&utf8=&format=json`
+        : `https://${lang}.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(qVariant)}&utf8=&format=json&srlimit=${count}`;
+
+      try {
+        const res = await httpRequest(
+          apiUrl,
+          buildRequestOpts(httpRequest, {
             method: 'GET',
             headers: {
               'User-Agent': 'DeepEvil/1.0 (https://github.com/eriktonon/deep-evil; mailto:research@deepevil.org)',
@@ -1924,225 +987,96 @@ async function searchWikipediaByLang(query, lang = 'en', {
               'Accept-Language': GLOBAL_ACCEPT_LANGUAGE
             },
             headersTimeout: timeoutMs,
-            bodyTimeout: timeoutMs
-          });
-          if (res.statusCode === 200) {
-            const data = await res.body.json();
-            const searchItems = Array.isArray(data?.query?.search) ? data.query.search : [];
-            const prefix = countryBadge ? `${countryBadge} ` : '';
-            const candidates = [];
-
-            const queryCallsigns = [...qVariant.matchAll(/\b([A-Za-zА-Яа-яЁё]{2,5}-\d{1,5})\b/g)].map((m) => m[1].toLowerCase());
-
-            for (const s of searchItems) {
-              if (!s?.title) continue;
-              const snippetClean = String(s.snippet || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
-              if (queryCallsigns.length > 0 && httpRequest === request && candidates.length > 0) {
-                const hayWiki = `${s.title} ${snippetClean}`.replace(/[\u2010-\u2015\u2212]/g, '-').toLowerCase();
-                const hasCallsign = queryCallsigns.some((cs) => {
-                  const [p, n] = cs.split('-');
-                  return new RegExp(`(?:^|[^\\p{L}\\p{N}])${p}[-\\s]?${n}(?:$|[^\\p{L}\\p{N}])`, 'iu').test(hayWiki);
-                });
-                if (!hasCallsign) continue;
-              }
-              candidates.push({
-                url: `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(String(s.title).replace(/ /g, '_'))}`,
-                title: `${prefix}${s.title} — Wikipedia (${lang.toUpperCase()})`,
-                description: snippetClean.length >= 50
-                  ? `${prefix}${snippetClean}`
-                  : `${prefix}${s.title} — Technical encyclopedia article (${lang.toUpperCase()}). ${snippetClean}`,
-                countryPole: countryPole || lang.toUpperCase()
-              });
-            }
-            if (candidates.length > 0) {
-              if (httpRequest === request) {
-                if (wikiSearchCache.size > 400) wikiSearchCache.clear();
-                wikiSearchCache.set(cacheKey, candidates);
-              }
-              return candidates;
-            }
-            break; // Status 200 mas 0 resultados: tenta a variante condensada mais curta
-          }
-          if (res.body && typeof res.body.dump === 'function') {
-            await res.body.dump().catch(() => {});
-          }
-        } catch (_) {}
-        if (attempt < 2) {
-          await new Promise((r) => setTimeout(r, 180));
+            bodyTimeout: timeoutMs,
+            signal
+          })
+        );
+        if (res.statusCode !== 200) {
+          await drainBody(res);
+          continue;
         }
-      }
+        const data = await res.body.json();
+        const prefix = countryBadge ? `${countryBadge} ` : '';
+        const candidates = [];
+
+        // Suporta tanto `generator=search` (pages com pageprops.wikibase_item) quanto `list=search` (mocks)
+        let rawEntries = [];
+        if (data?.query?.pages && typeof data.query.pages === 'object') {
+          rawEntries = Object.values(data.query.pages)
+            .sort((a, b) => (a.index || 99) - (b.index || 99))
+            .map((p) => ({
+              title: p.title,
+              snippet: p.extract || '',
+              wikidataId: p?.pageprops?.wikibase_item || null
+            }));
+        } else if (Array.isArray(data?.query?.search)) {
+          rawEntries = data.query.search.map((s) => ({
+            title: s.title,
+            snippet: String(s.snippet || '').replace(/<[^>]+>/g, ''),
+            wikidataId: null
+          }));
+        }
+
+        for (const entry of rawEntries) {
+          if (!entry?.title) continue;
+          const snippetClean = String(entry.snippet || '').replace(/\s+/g, ' ').trim();
+          const hayWiki = normalizeHyphens(`${entry.title} ${snippetClean}`);
+
+          // Rejeita páginas de jogos/desambiguação irrelevantes em execução real
+          if (httpRequest === request) {
+            if (/\((?:jogo|game|video game|film|filme|album|band|song|disambiguation|desambigua[çc][ãa]o)\)/i.test(entry.title)) {
+              continue;
+            }
+            if (queryCallsigns.length > 0 && !matchesAnyCallsign(hayWiki, queryCallsigns)) {
+              continue;
+            }
+            if (meaningfulTokens.length > 0 && !passesStrictTokenOverlap(hayWiki, meaningfulTokens, { minTokens: 1, minRatio: 0.45 })) {
+              continue;
+            }
+          }
+
+          candidates.push({
+            url: `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(String(entry.title).replace(/ /g, '_'))}`,
+            title: `${prefix}${entry.title} — Wikipedia (${lang.toUpperCase()})`,
+            description: snippetClean.length >= 40
+              ? `${prefix}${snippetClean}`
+              : `${prefix}${entry.title} — Encyclopedia reference (${lang.toUpperCase()}). ${snippetClean}`.trim(),
+            wikidataId: entry.wikidataId || undefined,
+            canonicalEntity: canonicalEntity || undefined,
+            countryPole: countryPole || lang.toUpperCase(),
+            engine: 'wikipedia',
+            engineRank: candidates.length + 1
+          });
+        }
+
+        if (candidates.length > 0) {
+          if (httpRequest === request) {
+            wikiSearchCache.set(cacheKey, candidates);
+          }
+          return candidates;
+        }
+      } catch (_) {}
     }
     return [];
   };
 
   if (httpRequest === request) {
-    return withWikiConcurrencyLimit(runFetch);
+    return withWikiConcurrencyLimit(runFetch, signal);
   }
   return runFetch();
 }
 
 /**
- * Seleciona um conjunto geograficamente balanceado entre os 7 grandes polos tecnológicos mundiais:
- * 🇺🇸 US (EUA), 🇨🇳 CN (China), 🇩🇪 DE (Alemanha), 🇯🇵 JP (Japão), 🇰🇷 KR (Coreia do Sul), 🇷🇺 RU (Rússia) e 🇧🇷 BR (Brasil),
- * garantindo representatividade internacional sem barreiras geográficas e bloqueando fazendas escolares rasas (`LOW_SIGNAL_DOMAINS`).
- */
-function selectMultiPolarTopResults({
-  directCandidates = [],
-  usPool = [],
-  cnPool = [],
-  dePool = [],
-  jpPool = [],
-  krPool = [],
-  ruPool = [],
-  brPool = [],
-  globalPool = []
-} = {}, totalCount = MULTI_POLAR_RESULTS_COUNT, query = '', searchScope = 'global') {
-  const effectiveScope = normalizeSearchScope(searchScope);
-  const seenUrls = new Set();
-  const finalResults = [];
-
-  const canAccept = (item, allowPortuguesePole = false) => {
-    if (!item || typeof item.url !== 'string') return false;
-    if (allowPortuguesePole || item.countryPole === 'BR') {
-      if (isLowSignalResult(item)) return false;
-    } else if (effectiveScope === 'external') {
-      // No modo 'external' (Só Externo), bloqueia 100% de resultados PT/BR mesmo se a query mencionar Brasil
-      if (isPortugueseOrBrazilianBubbleResult(item, '', true)) return false;
-    } else if (isPortugueseOrBrazilianBubbleResult(item, query, true)) {
-      return false;
-    }
-    let normUrl = item.url;
-    try {
-      const u = new URL(item.url);
-      if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
-      if (u.hostname.endsWith('.m.wikipedia.org')) {
-        u.hostname = u.hostname.replace('.m.wikipedia.org', '.wikipedia.org');
-      }
-      normUrl = u.toString();
-    } catch (_) {
-      return false;
-    }
-    if (seenUrls.has(normUrl)) return false;
-    seenUrls.add(normUrl);
-    item.url = normUrl;
-    return true;
-  };
-
-  const withPoleBadge = (item, badge, pole) => {
-    const cleanTitle = String(item.title || '').trim();
-    const taggedTitle = cleanTitle.startsWith('[') ? cleanTitle : `${badge} ${cleanTitle}`;
-    return {
-      ...item,
-      title: taggedTitle,
-      countryPole: item.countryPole || pole
-    };
-  };
-
-  // Modo 100% Brasil / Português ('brazil'): retorna apenas fontes do polo BR e candidatos diretos
-  if (effectiveScope === 'brazil') {
-    for (const d of directCandidates) {
-      if (finalResults.length >= totalCount) break;
-      const tagged = withPoleBadge(d, '[🇧🇷 BR]', 'BR');
-      if (canAccept(tagged, true)) {
-        finalResults.push(tagged);
-      }
-    }
-    const brOnlyQueue = brPool.filter((x) => !isLowSignalResult(x)).map((x) => withPoleBadge(x, '[🇧🇷 BR]', 'BR'));
-    for (const b of brOnlyQueue) {
-      if (finalResults.length >= totalCount) break;
-      if (canAccept(b, true)) {
-        finalResults.push(b);
-      }
-    }
-    return finalResults.slice(0, totalCount);
-  }
-
-  for (const d of directCandidates) {
-    if (finalResults.length >= totalCount) break;
-    if (effectiveScope === 'external' && d.countryPole === 'BR') continue;
-    if (canAccept(d, d.countryPole === 'BR' && effectiveScope !== 'external')) {
-      finalResults.push(d);
-    }
-  }
-
-  const filterCheckQuery = effectiveScope === 'external' ? '' : query;
-  const usQueue = usPool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, filterCheckQuery, true)).map((x) => withPoleBadge(x, '[🇺🇸 US]', 'US'));
-  const cnQueue = cnPool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, filterCheckQuery, true)).map((x) => withPoleBadge(x, '[🇨🇳 CN]', 'CN'));
-  const deQueue = dePool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, filterCheckQuery, true)).map((x) => withPoleBadge(x, '[🇩🇪 DE]', 'DE'));
-  const jpQueue = jpPool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, filterCheckQuery, true)).map((x) => withPoleBadge(x, '[🇯🇵 JP]', 'JP'));
-  const krQueue = krPool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, filterCheckQuery, true)).map((x) => withPoleBadge(x, '[🇰🇷 KR]', 'KR'));
-  const ruQueue = ruPool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, filterCheckQuery, true)).map((x) => withPoleBadge(x, '[🇷🇺 RU]', 'RU'));
-  // No modo 'external' (Só Externo), desativa completamente a fila BR
-  const brQueue = effectiveScope === 'external'
-    ? []
-    : brPool.filter((x) => !isLowSignalResult(x)).map((x) => withPoleBadge(x, '[🇧🇷 BR]', 'BR'));
-  const glQueue = globalPool.filter((x) => !isPortugueseOrBrazilianBubbleResult(x, filterCheckQuery, true)).map((x) => withPoleBadge(x, '[🌍 GLOBAL]', 'GLOBAL'));
-
-  // Intercala em round-robin estrito pelos 7 grandes polos:
-  // - 'global':   🇺🇸 US -> 🇨🇳 CN -> 🇩🇪 DE -> 🇯🇵 JP -> 🇰🇷 KR -> 🇷🇺 RU -> 🇧🇷 BR
-  // - 'external': 🇺🇸 US -> 🇨🇳 CN -> 🇩🇪 DE -> 🇯🇵 JP -> 🇰🇷 KR -> 🇷🇺 RU (0% Brasil)
-  let cursor = 0;
-  const maxCursor = Math.max(
-    usQueue.length,
-    cnQueue.length,
-    deQueue.length,
-    jpQueue.length,
-    krQueue.length,
-    ruQueue.length,
-    brQueue.length,
-    glQueue.length
-  );
-  while (finalResults.length < totalCount && cursor < maxCursor) {
-    if (cursor < usQueue.length && finalResults.length < totalCount && canAccept(usQueue[cursor], false)) {
-      finalResults.push(usQueue[cursor]);
-    }
-    if (cursor < cnQueue.length && finalResults.length < totalCount && canAccept(cnQueue[cursor], false)) {
-      finalResults.push(cnQueue[cursor]);
-    }
-    if (cursor < deQueue.length && finalResults.length < totalCount && canAccept(deQueue[cursor], false)) {
-      finalResults.push(deQueue[cursor]);
-    }
-    if (cursor < jpQueue.length && finalResults.length < totalCount && canAccept(jpQueue[cursor], false)) {
-      finalResults.push(jpQueue[cursor]);
-    }
-    if (cursor < krQueue.length && finalResults.length < totalCount && canAccept(krQueue[cursor], false)) {
-      finalResults.push(krQueue[cursor]);
-    }
-    if (cursor < ruQueue.length && finalResults.length < totalCount && canAccept(ruQueue[cursor], false)) {
-      finalResults.push(ruQueue[cursor]);
-    }
-    if (cursor < brQueue.length && finalResults.length < totalCount && canAccept(brQueue[cursor], true)) {
-      finalResults.push(brQueue[cursor]);
-    }
-    cursor += 1;
-  }
-
-  for (const g of glQueue) {
-    if (finalResults.length >= totalCount) break;
-    if (canAccept(g, false)) {
-      finalResults.push(g);
-    }
-  }
-
-  return finalResults.slice(0, totalCount);
-}
-
-const queryPoleTranslationCache = new Map();
-const canonicalEntityCache = new Map();
-let gtxRateLimitedUntil = 0;
-
-/**
- * Executa uma busca rápida no DuckDuckGo HTML (orgânica) para alimentar o Grounding de Entidades
- * e garantir que resultados web reais (fóruns técnicos, portais especializados, notícias, documentação)
- * entrem na cabeça dos polos em vez de depender exclusivamente de Wikipedia + OpenAlex.
+ * Busca rápida orgânica no DuckDuckGo HTML (com linkedom, AbortSignal e body.dump()).
  */
 async function fetchQuickDuckDuckGoWeb(queryText, {
   httpRequest = request,
-  timeoutMs = 3800,
+  timeoutMs = 3200,
   count = 6,
-  kl = 'wt-wt'
+  kl = 'wt-wt',
+  signal = null
 } = {}) {
-  if (httpRequest !== request) return [];
+  if (httpRequest !== request || signal?.aborted) return [];
   const cleanQ = String(queryText || '').trim();
   if (!cleanQ || cleanQ.length < 2) return [];
 
@@ -2152,29 +1086,30 @@ async function fetchQuickDuckDuckGoWeb(queryText, {
     url.searchParams.set('kl', kl);
     url.searchParams.set('kp', '-2');
 
-    const response = await httpRequest(url.toString(), {
-      method: 'GET',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36',
-        'Accept-Language': GLOBAL_ACCEPT_LANGUAGE
-      },
-      headersTimeout: timeoutMs,
-      bodyTimeout: timeoutMs
-    });
+    const response = await httpRequest(
+      url.toString(),
+      buildRequestOpts(httpRequest, {
+        method: 'GET',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36',
+          'Accept-Language': GLOBAL_ACCEPT_LANGUAGE
+        },
+        headersTimeout: timeoutMs,
+        bodyTimeout: timeoutMs,
+        signal
+      })
+    );
 
     if (response.statusCode !== 200) {
-      if (response.body && typeof response.body.dump === 'function') {
-        await response.body.dump().catch(() => {});
-      }
+      await drainBody(response);
       return [];
     }
 
     const html = await response.body.text();
     if (html.includes('anomaly.js') || html.includes('cc=botnet')) return [];
 
-    const dom = new JSDOM(html);
-    const doc = dom.window.document;
-    const anchors = [...doc.querySelectorAll('.result__a')];
+    const { document } = parseHTML(html);
+    const anchors = [...document.querySelectorAll('.result__a')];
     const items = [];
 
     for (const a of anchors) {
@@ -2193,8 +1128,10 @@ async function fetchQuickDuckDuckGoWeb(queryText, {
       const snippetEl = resultBlock ? resultBlock.querySelector('.result__snippet') : null;
       const candidate = {
         url: resolvedUrl,
-        title: String(a.textContent || '').trim(),
-        description: String(snippetEl?.textContent || '').trim()
+        title: String(a.textContent || '').replace(/\s+/g, ' ').trim(),
+        description: String(snippetEl?.textContent || '').replace(/\s+/g, ' ').trim(),
+        engine: 'ddg',
+        engineRank: items.length + 1
       };
       if (!candidate.title || isLowSignalResult(candidate)) continue;
       items.push(candidate);
@@ -2207,110 +1144,125 @@ async function fetchQuickDuckDuckGoWeb(queryText, {
 }
 
 /**
- * Coleta rápida de notícias e artigos web via Google News RSS oficial (`https://news.google.com/rss/search`),
- * que responde em ~250ms com HTTP 200 sem CAPTCHA/429 e expõe `<title>`, `<description>` e `<source url="...">`.
+ * Coleta honesta via Google News RSS (linkedom DOMParser):
+ * - Preserva `sourceUrl` do veículo original e marca `isNewsHeadline: true` + `pubDate`
+ * - NÃO infla artificialmente a descrição repetindo título + hostname para burlar o gate de 90 chars
+ * - Exige relevância real (>= 2 tokens ou callsign).
  */
 async function fetchGoogleNewsRssWeb(queryText, {
   httpRequest = request,
-  timeoutMs = 3500,
+  timeoutMs = 2800,
   count = 6,
   hl = 'pt-BR',
   gl = 'BR',
-  ceid = 'BR:pt-419'
+  ceid = 'BR:pt-419',
+  signal = null
 } = {}) {
-  if (httpRequest !== request) return [];
+  if (httpRequest !== request || signal?.aborted) return [];
   const cleanQ = String(queryText || '').trim();
   if (!cleanQ || cleanQ.length < 2) return [];
 
   try {
     const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(cleanQ)}&hl=${encodeURIComponent(hl)}&gl=${encodeURIComponent(gl)}&ceid=${encodeURIComponent(ceid)}`;
-    const res = await httpRequest(rssUrl, {
-      method: 'GET',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36',
-        'Accept': 'application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8'
-      },
-      headersTimeout: timeoutMs,
-      bodyTimeout: timeoutMs
-    });
+    const res = await httpRequest(
+      rssUrl,
+      buildRequestOpts(httpRequest, {
+        method: 'GET',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36',
+          'Accept': 'application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8'
+        },
+        headersTimeout: timeoutMs,
+        bodyTimeout: timeoutMs,
+        signal
+      })
+    );
     if (res.statusCode !== 200) {
-      if (res.body && typeof res.body.dump === 'function') {
-        await res.body.dump().catch(() => {});
-      }
+      await drainBody(res);
       return [];
     }
 
     const xml = await res.body.text();
-    const dom = new JSDOM(xml, { contentType: 'text/xml' });
-    const itemNodes = [...dom.window.document.querySelectorAll('item')];
+    const doc = new DOMParser().parseFromString(xml, 'text/xml');
+    const itemNodes = [...doc.querySelectorAll('item')];
     const parsedItems = [];
-    const queryWords = cleanQ
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .split(/\s+/)
-      .filter((w) => w.length >= 4 && !/^(mundo|world|tocou|played|site|para|como|sobre)$/i.test(w));
+    const queryWords = [...new Set(
+      cleanQ
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .split(/\s+/)
+        .filter((w) => w.length >= 4 && !/^(mundo|world|tocou|played|site|para|como|sobre|hoje|today)$/i.test(w))
+    )];
 
-    for (const node of itemNodes.slice(0, 45)) {
+    for (const node of itemNodes.slice(0, 40)) {
       const rawTitle = String(node.querySelector('title')?.textContent || '').replace(/\s+/g, ' ').trim();
       const rawLink = String(node.querySelector('link')?.textContent || '').trim();
       const rawDescHtml = String(node.querySelector('description')?.textContent || '');
-      const cleanDesc = rawDescHtml
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/&nbsp;/gi, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
+      const pubDate = String(node.querySelector('pubDate')?.textContent || '').trim();
       const sourceEl = node.querySelector('source');
       const sourceUrl = String(sourceEl?.getAttribute('url') || '').trim();
       const sourceName = String(sourceEl?.textContent || '').trim();
       if (!rawTitle || !rawLink) continue;
 
+      // Extrai link direto embutido se houver (evitando URL de wrapper quando possível)
+      const cleanDesc = rawDescHtml
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/&nbsp;/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      // Mantém descrição honesta (não infla artificialmente com texto boilerplate)
+      const honestDesc = cleanDesc && cleanDesc.toLowerCase() !== rawTitle.toLowerCase()
+        ? cleanDesc
+        : '';
+
       const candidate = {
         url: rawLink,
         sourceUrl: sourceUrl || rawLink,
+        sourceName: sourceName || undefined,
+        pubDate: pubDate || undefined,
         title: rawTitle,
-        description: cleanDesc.length >= 40 ? cleanDesc : `${rawTitle}${sourceName ? ` (${sourceName})` : ''}`
+        description: honestDesc,
+        isNewsHeadline: true,
+        engine: 'gnews'
       };
       if (isLowSignalResult({ url: candidate.sourceUrl, title: candidate.title, description: candidate.description })) {
         continue;
       }
-      const normTitle = rawTitle
-        .replace(/[\u2010-\u2015\u2212]/g, '-')
+
+      const normTitle = normalizeHyphens(rawTitle)
         .normalize('NFD')
         .replace(/[\u0300-\u036f]/g, '');
       const hasCallsign = /\b[A-Z]{2,5}-\d{1,5}\b/.test(normTitle);
       const lowerTitle = normTitle.toLowerCase();
       const matchedQueryWords = queryWords.filter((w) => lowerTitle.includes(w)).length;
+      if (queryWords.length >= 2 && matchedQueryWords === 0 && !hasCallsign) {
+        continue;
+      }
+
       const relevanceScore = (hasCallsign ? 3 : 0) + matchedQueryWords * 2;
       parsedItems.push({ candidate, relevanceScore, idx: parsedItems.length });
     }
 
     parsedItems.sort((a, b) => (b.relevanceScore - a.relevanceScore) || (a.idx - b.idx));
-    return parsedItems.slice(0, count).map((x) => x.candidate);
+    return parsedItems.slice(0, count).map((x, i) => ({ ...x.candidate, engineRank: i + 1 }));
   } catch (_) {
     return [];
   }
 }
 
 /**
- * Resolve apelidos coloquiais, siglas e entidades canônicas usando o SERP Web + Grafo Interlínguas da Wikipedia (`langlinks` + `description`).
- * Exemplo real:
- * - Usuário pesquisa `"Radio do fim do mundo tocou na russia"` ou `"UVB‑76"`.
- * - O SERP / Google News RSS menciona `UVB-76` nos títulos/snippets.
- * - O grafo `langlinks` da Wikipedia resolve automaticamente:
- *   `en: UVB-76`, `ru: УВБ-76`, `de: The Buzzer`, `ja: UVB-76`, `ko: UVB-76`, `zh: UVB-76`, `pt: UVB-76`
- *   e `description: Soviet and Russian shortwave radio station`, eliminando falsos positivos (ex.: radiação UVB em pele de ratos).
+ * Resolve entidades canônicas via grafo interlínguas da Wikipedia (`langlinks` + `pageprops.wikibase_item`).
  */
 async function resolveCanonicalEntityFromWebAndWiki(rawQuery, poles, webItems = [], {
   httpRequest = request,
-  timeoutMs = 3500
+  timeoutMs = 2400,
+  signal = null
 } = {}) {
-  if (httpRequest !== request) return poles;
-  const normalizedRaw = String(rawQuery || '')
-    .replace(/[\u2010\u2011\u2012\u2013\u2014\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-')
-    .trim();
+  if (httpRequest !== request || signal?.aborted) return poles;
+  const normalizedRaw = normalizeHyphens(rawQuery).trim();
 
-  // 0. Caso o usuário peça explicitamente OUTRAS estações de rádio do juízo final / números semelhantes à УВБ-76 / UVB-76
   const isOtherStationsLikeUvb =
     /\b(outr[oa]s?|other|al[ée]m\s+d[aeo]|semelhantes?|parecid[oa]s?|similar|like)\b/i.test(normalizedRaw) &&
     /(?:uvb-?76|увб-?76|buzzer|ju[íi]zo\s+final|fim\s+do\s+mundo|doomsday)/i.test(normalizedRaw);
@@ -2335,7 +1287,6 @@ async function resolveCanonicalEntityFromWebAndWiki(rawQuery, poles, webItems = 
     return poles;
   }
 
-  // 1. Detecta indicativo/código técnico explícito na query ou dominante no SERP (ex.: UVB-76)
   const IGNORED_CODE_PREFIXES = /^(UTF|ISO|COVID|SARS|HTTP|GPT|GLM|QWEN|LLAMA|PHI|GEMMA|CLAUDE|MISTRAL|DEEPSEEK|BERT|YOLO|SHA|AES|RSA|TLS|SSL|IPV|CVE|WIN|MAC|IOS|JDK|PHP|CSS|SQL|API|SDK)-\d+$/i;
   const explicitCallsignMatch = normalizedRaw.match(/\b([A-Za-z]{2,5}-\d{1,5})\b/);
   let detectedCallsign = explicitCallsignMatch ? explicitCallsignMatch[1].toUpperCase() : '';
@@ -2344,16 +1295,13 @@ async function resolveCanonicalEntityFromWebAndWiki(rawQuery, poles, webItems = 
     const codeScores = new Map();
     const codeItemCount = new Map();
     for (const item of webItems) {
-      const titleNorm = String(item.title || '').replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-');
-      const descNorm = String(item.description || '').replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-');
+      const titleNorm = normalizeHyphens(item.title || '');
+      const descNorm = normalizeHyphens(item.description || '');
       const titleCodes = new Set([...titleNorm.matchAll(/\b([A-Z]{2,5}-\d{1,5})\b/g)].map((m) => m[1].toUpperCase()));
       const descCodes = new Set([...descNorm.matchAll(/\b([A-Z]{2,5}-\d{1,5})\b/g)].map((m) => m[1].toUpperCase()));
-      const allItemCodes = new Set([...titleCodes, ...descCodes]);
-      for (const code of allItemCodes) {
+      for (const code of new Set([...titleCodes, ...descCodes])) {
         if (IGNORED_CODE_PREFIXES.test(code)) continue;
-        // Aparição explícita no headline (<title>) vale peso 2; no snippet vale peso 1
-        const weight = titleCodes.has(code) ? 2 : 1;
-        codeScores.set(code, (codeScores.get(code) || 0) + weight);
+        codeScores.set(code, (codeScores.get(code) || 0) + (titleCodes.has(code) ? 2 : 1));
         codeItemCount.set(code, (codeItemCount.get(code) || 0) + 1);
       }
     }
@@ -2370,47 +1318,51 @@ async function resolveCanonicalEntityFromWebAndWiki(rawQuery, poles, webItems = 
     }
   }
 
-  // 2. Se encontramos um indicativo canônico (ex.: UVB-76) na query ou nos snippets do SERP, consulta o grafo interlínguas da Wikipedia
   if (detectedCallsign) {
     const cacheKey = `callsign::${detectedCallsign}`;
     let wikiEntity = canonicalEntityCache.get(cacheKey);
     if (!wikiEntity) {
       try {
-        const apiUrl = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(detectedCallsign)}&prop=langlinks|description&lllimit=50&redirects=1&format=json`;
-        const res = await httpRequest(apiUrl, {
-          method: 'GET',
-          headers: {
-            'User-Agent': 'DeepEvil/1.0 (Global Research Engine)',
-            'Accept': 'application/json'
-          },
-          headersTimeout: timeoutMs,
-          bodyTimeout: timeoutMs
-        });
+        const apiUrl = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(detectedCallsign)}&prop=langlinks|description|pageprops&ppprop=wikibase_item&lllimit=50&redirects=1&format=json`;
+        const res = await httpRequest(
+          apiUrl,
+          buildRequestOpts(httpRequest, {
+            method: 'GET',
+            headers: {
+              'User-Agent': 'DeepEvil/1.0 (Global Research Engine)',
+              'Accept': 'application/json'
+            },
+            headersTimeout: timeoutMs,
+            bodyTimeout: timeoutMs,
+            signal
+          })
+        );
         if (res.statusCode === 200) {
           const data = await res.body.json();
-          const pages = data?.query?.pages || {};
-          const page = Object.values(pages)[0];
+          const page = Object.values(data?.query?.pages || {})[0];
           if (page && page.pageid && !('missing' in page)) {
             const langMap = {};
             for (const ll of page.langlinks || []) {
-              if (ll?.lang && ll?.['*']) {
-                langMap[ll.lang] = ll['*'];
-              }
+              if (ll?.lang && ll?.['*']) langMap[ll.lang] = ll['*'];
             }
             wikiEntity = {
               enTitle: page.title || detectedCallsign,
               description: String(page.description || '').trim(),
+              wikidataId: page?.pageprops?.wikibase_item || null,
               langMap
             };
-            if (canonicalEntityCache.size > 200) canonicalEntityCache.clear();
             canonicalEntityCache.set(cacheKey, wikiEntity);
           }
+        } else {
+          await drainBody(res);
         }
       } catch (_) {}
     }
 
     if (wikiEntity) {
-      const { enTitle, description, langMap } = wikiEntity;
+      const { enTitle, description, langMap, wikidataId } = wikiEntity;
+      poles.canonicalEntity = enTitle;
+      poles.canonicalWikidataId = wikidataId || undefined;
       poles.usWiki = enTitle;
       poles.cnWiki = langMap.zh || enTitle;
       poles.deWiki = langMap.de || enTitle;
@@ -2418,18 +1370,11 @@ async function resolveCanonicalEntityFromWebAndWiki(rawQuery, poles, webItems = 
       poles.krWiki = langMap.ko || enTitle;
       poles.ruWiki = langMap.ru || enTitle;
       poles.brWiki = langMap.pt || enTitle;
-
-      // Mantém `poles.us` enxuto (`enTitle`) para que o Bing HTML retorne sites diretos (ex.: priyom.org, uvb-76.ru) sem truncar na 1ª palavra
       poles.us = enTitle;
       poles.enCore = description ? `${enTitle} ${description}` : enTitle;
       poles.academicCore = description ? `${enTitle} ${description}` : enTitle;
-      if (langMap.ru) {
-        poles.ru = `${langMap.ru} ${enTitle}`;
-      }
-      if (langMap.de) {
-        poles.de = `${langMap.de} ${enTitle}`;
-      }
-      return poles;
+      if (langMap.ru) poles.ru = `${langMap.ru} ${enTitle}`;
+      if (langMap.de) poles.de = `${langMap.de} ${enTitle}`;
     }
   }
 
@@ -2437,9 +1382,8 @@ async function resolveCanonicalEntityFromWebAndWiki(rawQuery, poles, webItems = 
 }
 
 /**
- * Classifica e distribui resultados orgânicos da Web (DuckDuckGo / Bing / Google News RSS / SearXNG) nos 7 polos geopolíticos
- * com base em TLD, domínio e alfabeto, garantindo que fontes web reais (ex.: `priyom.org`, `uvb-76.ru`,
- * `presenc.ai`, `restofworld.org`, `zhihu.com`) ocupem o topo dos polos.
+ * Classifica resultados orgânicos da Web nos 7 polos geopolíticos de forma HONESTA
+ * (sem inflar artificialmente `description` para burlar o gate de 90 chars).
  */
 function routeOrganicWebResultsToPoles(webItems = [], rawQuery = '', includeBrPole = true) {
   const buckets = {
@@ -2451,14 +1395,14 @@ function routeOrganicWebResultsToPoles(webItems = [], rawQuery = '', includeBrPo
     ruWeb: [],
     brWeb: []
   };
-  const seenUrls = new Set();
+  const seenKeys = new Set();
 
   for (const item of webItems) {
     if (!item || !item.url) continue;
     const effectiveDomainUrl = String(item.sourceUrl || item.url).trim();
     if (isLowSignalResult({ ...item, url: effectiveDomainUrl })) continue;
-    const normUrl = String(item.url).trim();
-    if (!normUrl || seenUrls.has(normUrl)) continue;
+    const canon = canonicalizeUrl(item.url);
+    if (!canon || seenKeys.has(canon.canonicalKey)) continue;
 
     let hostname = '';
     try {
@@ -2466,17 +1410,17 @@ function routeOrganicWebResultsToPoles(webItems = [], rawQuery = '', includeBrPo
     } catch (_) {
       continue;
     }
-    // Wikipedia já é consultada nativamente em cada idioma via searchWikipediaByLang
-    if (hostname.endsWith('wikipedia.org')) continue;
 
-    seenUrls.add(normUrl);
+    seenKeys.add(canon.canonicalKey);
     const text = `${item.title || ''} ${item.description || ''}`;
     const cleanTitle = String(item.title || '').replace(/^\[(?:🇺🇸|🇨🇳|🇩🇪|🇯🇵|🇰🇷|🇷🇺|🇧🇷|🌍)[^\]]+\]\s*/, '').trim();
-    const rawDesc = String(item.description || '').trim();
-    const enrichedDesc = rawDesc.length >= 110
-      ? rawDesc
-      : `${cleanTitle} (${hostname}) — ${rawDesc || 'Verified web reference and primary domain source for global research.'} [Source: ${effectiveDomainUrl}]`;
-    const baseItem = { ...item, description: enrichedDesc };
+    const rawDesc = String(item.description || item.content || '').replace(/\s+/g, ' ').trim();
+    // Preserva descrição honesta (sem padding artificial repetindo título + hostname)
+    const baseItem = {
+      ...item,
+      url: canon.url,
+      description: rawDesc
+    };
     const probeItem = { ...baseItem, url: effectiveDomainUrl };
 
     if (
@@ -2484,16 +1428,14 @@ function routeOrganicWebResultsToPoles(webItems = [], rawQuery = '', includeBrPo
       hostname.endsWith('.hk') ||
       hostname.includes('zhihu.com') ||
       hostname.includes('modelscope.') ||
+      hostname.includes('opencsg.') ||
+      hostname.includes('wisemodel.') ||
       hostname.includes('gitee.com') ||
       hostname.includes('csdn.net') ||
       hostname.includes('baidu.com') ||
       /[\u4e00-\u9fff]/.test(text)
     ) {
-      buckets.cnWeb.push({
-        ...baseItem,
-        title: `[🇨🇳 CN] ${cleanTitle}`,
-        countryPole: 'CN'
-      });
+      buckets.cnWeb.push({ ...baseItem, title: `[🇨🇳 CN] ${cleanTitle}`, countryPole: 'CN' });
     } else if (
       hostname.endsWith('.ru') ||
       hostname.endsWith('.su') ||
@@ -2501,43 +1443,19 @@ function routeOrganicWebResultsToPoles(webItems = [], rawQuery = '', includeBrPo
       hostname.includes('cyberleninka.ru') ||
       /[\u0400-\u04ff]/.test(text)
     ) {
-      buckets.ruWeb.push({
-        ...baseItem,
-        title: `[🇷🇺 RU] ${cleanTitle}`,
-        countryPole: 'RU'
-      });
+      buckets.ruWeb.push({ ...baseItem, title: `[🇷🇺 RU] ${cleanTitle}`, countryPole: 'RU' });
     } else if (hostname.endsWith('.de')) {
-      buckets.deWeb.push({
-        ...baseItem,
-        title: `[🇩🇪 DE] ${cleanTitle}`,
-        countryPole: 'DE'
-      });
+      buckets.deWeb.push({ ...baseItem, title: `[🇩🇪 DE] ${cleanTitle}`, countryPole: 'DE' });
     } else if (hostname.endsWith('.jp') || /[\u3040-\u30ff]/.test(text)) {
-      buckets.jpWeb.push({
-        ...baseItem,
-        title: `[🇯🇵 JP] ${cleanTitle}`,
-        countryPole: 'JP'
-      });
+      buckets.jpWeb.push({ ...baseItem, title: `[🇯🇵 JP] ${cleanTitle}`, countryPole: 'JP' });
     } else if (hostname.endsWith('.kr') || /[\uac00-\ud7af]/.test(text)) {
-      buckets.krWeb.push({
-        ...baseItem,
-        title: `[🇰🇷 KR] ${cleanTitle}`,
-        countryPole: 'KR'
-      });
+      buckets.krWeb.push({ ...baseItem, title: `[🇰🇷 KR] ${cleanTitle}`, countryPole: 'KR' });
     } else if (isPortugueseOrBrazilianBubbleResult(probeItem, rawQuery, true)) {
       if (includeBrPole) {
-        buckets.brWeb.push({
-          ...baseItem,
-          title: `[🇧🇷 BR] ${cleanTitle}`,
-          countryPole: 'BR'
-        });
+        buckets.brWeb.push({ ...baseItem, title: `[🇧🇷 BR] ${cleanTitle}`, countryPole: 'BR' });
       }
     } else {
-      buckets.usWeb.push({
-        ...baseItem,
-        title: `[🇺🇸 US] ${cleanTitle}`,
-        countryPole: 'US'
-      });
+      buckets.usWeb.push({ ...baseItem, title: `[🇺🇸 US] ${cleanTitle}`, countryPole: 'US' });
     }
   }
 
@@ -2545,575 +1463,48 @@ function routeOrganicWebResultsToPoles(webItems = [], rawQuery = '', includeBrPo
 }
 
 /**
- * Traduz dinamicamente uma consulta para os idiomas dos polos (`en`, `zh-CN`, `de`, `ja`, `ko`, `ru`)
- * quando ela não bateu em um dicionário de domínio pré-mapeado, garantindo que pesquisas arbitrárias
- * (política, economia, geografia, urbanismo, história, biologia, etc.) busquem em cada país no idioma nativo sem hardcode.
+ * Pesquisa preprints científicos globais via ArXiv API (linkedom DOMParser + AbortSignal).
  */
-async function enrichMultiPolarQueriesWithTranslation(poles, rawQuery, { httpRequest = request, timeoutMs = 2500 } = {}) {
-  if (httpRequest !== request) return poles;
-  const needsLiveTranslation = poles.cn === poles.enCore && !/[\u4e00-\u9fff]/.test(poles.cn);
-  if (!needsLiveTranslation) return poles;
-
-  const baseText = String(poles.br || rawQuery || poles.enCore || '').trim();
-  if (!baseText || baseText.length < 3) return poles;
-
-  const translateQuick = async (tl) => {
-    const cacheKey = `${tl}::${baseText}`;
-    if (queryPoleTranslationCache.has(cacheKey)) {
-      return queryPoleTranslationCache.get(cacheKey);
-    }
-    if (Date.now() >= gtxRateLimitedUntil) {
-      try {
-        const gtxUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(tl)}&dt=t&q=${encodeURIComponent(baseText)}`;
-        const res = await httpRequest(gtxUrl, {
-          method: 'GET',
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/131.0.0.0 Safari/537.36',
-            'Accept': 'application/json'
-          },
-          headersTimeout: timeoutMs,
-          bodyTimeout: timeoutMs
-        });
-        if (res.statusCode === 200) {
-          const payload = await res.body.json();
-          if (Array.isArray(payload?.[0])) {
-            const joined = payload[0]
-              .map((seg) => (Array.isArray(seg) && typeof seg[0] === 'string' ? seg[0] : ''))
-              .join('')
-              .replace(/[?!.]+$/g, '')
-              .replace(/\s+/g, ' ')
-              .trim();
-            if (joined) {
-              if (queryPoleTranslationCache.size > 300) queryPoleTranslationCache.clear();
-              queryPoleTranslationCache.set(cacheKey, joined);
-              return joined;
-            }
-          }
-        } else {
-          if (res.statusCode === 429 || res.statusCode === 403) {
-            gtxRateLimitedUntil = Date.now() + 180_000;
-          }
-          if (res.body && typeof res.body.dump === 'function') {
-            await res.body.dump().catch(() => {});
-          }
-        }
-      } catch (_) {}
-    }
-
-    // Fallback sem CAPTCHA via MyMemory Translation API quando Google gtx retorna HTTP 429
-    try {
-      const mmUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(baseText)}&langpair=${encodeURIComponent(`pt|${tl}`)}`;
-      const mmRes = await httpRequest(mmUrl, {
-        method: 'GET',
-        headers: {
-          'User-Agent': 'DeepEvil/1.0 (Global Research Engine)',
-          'Accept': 'application/json'
-        },
-        headersTimeout: timeoutMs,
-        bodyTimeout: timeoutMs
-      });
-      if (mmRes.statusCode === 200) {
-        const mmData = await mmRes.body.json();
-        const trText = String(mmData?.responseData?.translatedText || '')
-          .replace(/[?!.]+$/g, '')
-          .replace(/\s+/g, ' ')
-          .trim();
-        if (trText && !/MYMEMORY WARNING|PLEASE SELECT TWO DISTINCT/i.test(trText)) {
-          if (queryPoleTranslationCache.size > 300) queryPoleTranslationCache.clear();
-          queryPoleTranslationCache.set(cacheKey, trText);
-          return trText;
-        }
-      } else if (mmRes.body && typeof mmRes.body.dump === 'function') {
-        await mmRes.body.dump().catch(() => {});
-      }
-    } catch (_) {}
-    return '';
-  };
-
-  const [enTr, zhTr, deTr, jaTr, koTr, ruTr] = await Promise.all([
-    translateQuick('en'),
-    translateQuick('zh-CN'),
-    translateQuick('de'),
-    translateQuick('ja'),
-    translateQuick('ko'),
-    translateQuick('ru')
-  ]);
-
-  if (enTr) {
-    poles.us = enTr;
-    poles.usWiki = enTr;
-    poles.enCore = enTr;
-    poles.academicCore = enTr;
-  }
-  if (zhTr) {
-    poles.cn = zhTr;
-    poles.cnWiki = zhTr;
-  }
-  if (deTr) {
-    poles.de = deTr;
-    poles.deWiki = deTr;
-  }
-  if (jaTr) {
-    poles.jp = jaTr;
-    poles.jpWiki = jaTr;
-  }
-  if (koTr) {
-    poles.kr = koTr;
-    poles.krWiki = koTr;
-  }
-  if (ruTr) {
-    poles.ru = ruTr;
-    poles.ruWiki = ruTr;
-  }
-  return poles;
-}
-
-/**
- * Executa a Federação Geopolítica Multi-Polo em paralelo respeitando o `searchScope` e o domínio real da pergunta (`poles.domain`):
- * - `global`:   7 polos mundiais (🇺🇸 US + 🇨🇳 CN + 🇩🇪 DE + 🇯🇵 JP + 🇰🇷 KR + 🇷🇺 RU + 🇧🇷 BR)
- * - `external`: 6 polos internacionais (🇺🇸 US + 🇨🇳 CN + 🇩🇪 DE + 🇯🇵 JP + 🇰🇷 KR + 🇷🇺 RU, zero Brasil/PT)
- * - `brazil`:   100% Brasil / Português Técnico & Acadêmico (🇧🇷 BR: Wikipedia PT + OpenAlex BR + Bing/DDG PT-BR)
- */
-async function collectMultiPolarFederation(query, {
-  httpRequest = request,
-  timeoutMs = 5000,
-  extraRawResults = [],
-  totalCount = MULTI_POLAR_RESULTS_COUNT,
-  searchScope = 'global',
-  focusMode = 'web'
-} = {}) {
-  const effectiveScope = normalizeSearchScope(searchScope);
-  const poles = await enrichMultiPolarQueriesWithTranslation(
-    buildMultiPolarQueries(query, focusMode),
-    query,
-    { httpRequest, timeoutMs: 2500 }
-  );
-
-  // Fase 0: Coleta Web Orgânica (DuckDuckGo + Google News RSS na língua original e em Inglês) e Grounding de Entidades (ex.: "Radio do fim do mundo" -> UVB-76 / УВБ-76 / The Buzzer)
-  let organicSeedResults = Array.isArray(extraRawResults) ? [...extraRawResults] : [];
-  if (httpRequest === request) {
-    const rawTrimmed = String(query || '').trim();
-    const enTrimmed = String(poles.enCore || '').trim();
-    const [ddgNative, ddgEn, gnewsPt, gnewsEn] = await Promise.all([
-      fetchQuickDuckDuckGoWeb(rawTrimmed, {
-        httpRequest,
-        timeoutMs: 3400,
-        count: 6,
-        kl: effectiveScope === 'brazil' ? 'br-pt' : 'wt-wt'
-      }),
-      enTrimmed && enTrimmed.toLowerCase() !== rawTrimmed.toLowerCase()
-        ? fetchQuickDuckDuckGoWeb(enTrimmed, { httpRequest, timeoutMs: 3400, count: 6, kl: 'wt-wt' })
-        : Promise.resolve([]),
-      fetchGoogleNewsRssWeb(rawTrimmed, {
-        httpRequest,
-        timeoutMs: 3200,
-        count: 5,
-        hl: 'pt-BR',
-        gl: 'BR',
-        ceid: 'BR:pt-419'
-      }),
-      fetchGoogleNewsRssWeb(enTrimmed || rawTrimmed, {
-        httpRequest,
-        timeoutMs: 3200,
-        count: 5,
-        hl: 'en-US',
-        gl: 'US',
-        ceid: 'US:en'
-      })
-    ]);
-    const combinedSeeds = [...ddgEn, ...ddgNative, ...gnewsPt, ...gnewsEn, ...organicSeedResults];
-    await resolveCanonicalEntityFromWebAndWiki(query, poles, combinedSeeds, {
-      httpRequest,
-      timeoutMs: 3200
-    });
-    // Filtra itens de RSS que bateram apenas em palavras genéricas (ex.: "sem fim" sem "rádio" ou sem o callsign resolvido)
-    const anchorTokens = `${rawTrimmed} ${poles.us || ''} ${poles.usWiki || ''}`
-      .toLowerCase()
-      .replace(/[\u2010-\u2015\u2212]/g, '-')
-      .split(/\s+/)
-      .filter((t) => t.length >= 4 && !/^(mundo|world|fim|end|tocou|played|broadcast|russia|rússia|russian|soviet|station|shortwave|site|website|concorrente|alternative|competitor|china|chinese)$/i.test(t));
-    organicSeedResults = combinedSeeds.filter((item) => {
-      if (anchorTokens.length === 0) return true;
-      const hay = `${item.title || ''} ${item.description || ''}`
-        .toLowerCase()
-        .replace(/[\u2010-\u2015\u2212]/g, '-')
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '');
-      return anchorTokens.some((tok) => {
-        const normTok = tok.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-        return hay.includes(normTok);
-      });
-    });
-  }
-
-  const wantsGitHub = /https?:\/\/|\.git\b|\b(github|reposit[óo]rios?|open[-\s]?source|c[óo]digo[-\s]?aberto)\b/i.test(query);
-  const isSoftwareDomain = poles.domain === 'software_cs' || wantsGitHub;
-  const isExactOrSoftware = isSoftwareDomain || poles.domain === 'exact_sciences';
-
-  const interleaveArrays = (...arrays) => {
-    const out = [];
-    const maxLen = Math.max(0, ...arrays.map((a) => (Array.isArray(a) ? a.length : 0)));
-    for (let i = 0; i < maxLen; i++) {
-      for (const arr of arrays) {
-        if (Array.isArray(arr) && arr[i]) {
-          out.push(arr[i]);
-        }
-      }
-    }
-    return out;
-  };
-
-  // Modo 'brazil' (Só Brasil / PT-BR): coleta dedicada 100% em Português e instituições brasileiras
-  if (effectiveScope === 'brazil') {
-    const [directCandidates, brWiki, brOpenAlex, brBing] = await Promise.all([
-      resolveDirectUrlAndGitCandidates(query, { httpRequest, timeoutMs: 4000 }),
-      searchWikipediaByLang(poles.brWiki, 'pt', { httpRequest, timeoutMs: 4500, count: 4, countryPole: 'BR', countryBadge: '[🇧🇷 BR]' }),
-      searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 4500, count: 4, countryCode: 'BR', countryPole: 'BR', countryBadge: '[🇧🇷 BR]' }),
-      searchBingHtml(poles.br, { httpRequest, timeoutMs: 4500, count: 4, searchScope: 'brazil' })
-    ]);
-    const brExtra = organicSeedResults.filter((item) => !isLowSignalResult(item));
-    const brPool = interleaveArrays([...brExtra, ...brBing], brWiki, brOpenAlex).slice(0, 12);
-
-    return selectMultiPolarTopResults(
-      {
-        directCandidates,
-        brPool
-      },
-      totalCount,
-      query,
-      'brazil'
-    );
-  }
-
-  const includeBrPole = effectiveScope !== 'external';
-
-  const [
-    directCandidates,
-    // 🇺🇸 Polo Estados Unidos
-    usOpenAlex,
-    usHn,
-    usArxiv,
-    usWiki,
-    usBing,
-    // 🇨🇳 Polo China
-    cnOpenAlex,
-    cnWiki,
-    cnGitHub,
-    // 🇩🇪 Polo Alemanha
-    deOpenAlex,
-    deWiki,
-    // 🇯🇵 Polo Japão
-    jpOpenAlex,
-    jpWiki,
-    // 🇰🇷 Polo Coreia do Sul
-    krOpenAlex,
-    krWiki,
-    // 🇷🇺 Polo Rússia
-    ruHabr,
-    ruYandex,
-    ruOpenAlex,
-    ruWiki,
-    // 🇧🇷 Polo Brasil / Português
-    brWiki,
-    brOpenAlex
-  ] = await Promise.all([
-    resolveDirectUrlAndGitCandidates(query, { httpRequest, timeoutMs: 4000 }),
-    // US Pole
-    searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 4500, count: 3, countryCode: 'US', countryPole: 'US', countryBadge: '[🇺🇸 US]' }),
-    isSoftwareDomain
-      ? searchHackerNewsGlobal(poles.enCore, { httpRequest, timeoutMs: 4000, count: 2 })
-      : Promise.resolve([]),
-    isExactOrSoftware
-      ? searchArxivGlobal(poles.academicCore, { httpRequest, timeoutMs: 4500, count: 2 })
-      : Promise.resolve([]),
-    searchWikipediaByLang(poles.usWiki || poles.enCore, 'en', { httpRequest, timeoutMs: 4000, count: 3, countryPole: 'US', countryBadge: '[🇺🇸 US]' }),
-    searchBingHtml(poles.us, { httpRequest, timeoutMs: 4500, count: 3, searchScope: 'external' }),
-    // China Pole
-    searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 4500, count: 3, countryCode: 'CN', countryPole: 'CN', countryBadge: '[🇨🇳 CN]' }),
-    searchWikipediaByLang(poles.cnWiki, 'zh', { httpRequest, timeoutMs: 4000, count: 3, countryPole: 'CN', countryBadge: '[🇨🇳 CN]' }),
-    isSoftwareDomain
-      ? searchGitHubGlobal(poles.enCore, { httpRequest, timeoutMs: 4000, count: wantsGitHub ? 5 : 2 })
-      : Promise.resolve([]),
-    // Germany Pole
-    searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 4500, count: 3, countryCode: 'DE', countryPole: 'DE', countryBadge: '[🇩🇪 DE]' }),
-    searchWikipediaByLang(poles.deWiki, 'de', { httpRequest, timeoutMs: 4000, count: 3, countryPole: 'DE', countryBadge: '[🇩🇪 DE]' }),
-    // Japan Pole
-    searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 4500, count: 3, countryCode: 'JP', countryPole: 'JP', countryBadge: '[🇯🇵 JP]' }),
-    searchWikipediaByLang(poles.jpWiki, 'ja', { httpRequest, timeoutMs: 4000, count: 3, countryPole: 'JP', countryBadge: '[🇯🇵 JP]' }),
-    // South Korea Pole
-    searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 4500, count: 3, countryCode: 'KR', countryPole: 'KR', countryBadge: '[🇰🇷 KR]' }),
-    searchWikipediaByLang(poles.krWiki, 'ko', { httpRequest, timeoutMs: 4000, count: 3, countryPole: 'KR', countryBadge: '[🇰🇷 KR]' }),
-    // Russia Pole
-    isSoftwareDomain
-      ? searchHabrRussia(poles.ru, { httpRequest, timeoutMs: 4500, count: 3, fallbackQuery: poles.enCore })
-      : Promise.resolve([]),
-    searchYandexRussia(poles.ruWiki || poles.ru, { httpRequest, timeoutMs: 4500, count: 3, fallbackQuery: poles.enCore }),
-    searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 4500, count: 3, countryCode: 'RU', countryPole: 'RU', countryBadge: '[🇷🇺 RU]' }),
-    searchWikipediaByLang(poles.ruWiki, 'ru', { httpRequest, timeoutMs: 4000, count: 3, countryPole: 'RU', countryBadge: '[🇷🇺 RU]' }),
-    // Brazil / Portuguese Pole
-    includeBrPole
-      ? searchWikipediaByLang(poles.brWiki, 'pt', { httpRequest, timeoutMs: 4000, count: 3, countryPole: 'BR', countryBadge: '[🇧🇷 BR]' })
-      : Promise.resolve([]),
-    includeBrPole
-      ? searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 4500, count: 3, countryCode: 'BR', countryPole: 'BR', countryBadge: '[🇧🇷 BR]' })
-      : Promise.resolve([])
-  ]);
-
-  const {
-    usWeb,
-    cnWeb,
-    deWeb,
-    jpWeb,
-    krWeb,
-    ruWeb,
-    brWeb
-  } = routeOrganicWebResultsToPoles([...organicSeedResults, ...(usBing || [])], query, includeBrPole);
-
-  // Intercala dentro de cada polo priorizando Web Orgânica + Enciclopédia Canônica + Paper Acadêmico do País
-  const usPool = interleaveArrays(
-    usWeb,
-    usWiki,
-    usOpenAlex,
-    [...usHn, ...usArxiv]
-  ).slice(0, 6);
-
-  const cnGitHubBadged = (cnGitHub || []).map((item) => ({
-    ...item,
-    title: String(item.title || '').startsWith('[') ? item.title : `[🇨🇳 CN] ${item.title}`,
-    countryPole: 'CN'
-  }));
-
-  const cnPool = interleaveArrays(
-    cnWeb.length > 0 ? cnWeb : (cnGitHubBadged.length > 0 ? cnGitHubBadged : cnWiki),
-    cnGitHubBadged.length > 0 ? cnGitHubBadged : cnWiki,
-    cnWiki,
-    cnOpenAlex
-  ).slice(0, 5);
-
-  const dePool = interleaveArrays(
-    deWeb.length > 0 ? deWeb : deWiki,
-    deWeb.length > 0 ? deWiki : deOpenAlex,
-    deOpenAlex
-  ).slice(0, 5);
-
-  const jpPool = interleaveArrays(
-    jpWeb.length > 0 ? jpWeb : jpWiki,
-    jpWeb.length > 0 ? jpWiki : jpOpenAlex,
-    jpOpenAlex
-  ).slice(0, 5);
-
-  const krPool = interleaveArrays(
-    krWeb.length > 0 ? krWeb : krWiki,
-    krWeb.length > 0 ? krWiki : krOpenAlex,
-    krOpenAlex
-  ).slice(0, 5);
-
-  const ruPool = interleaveArrays(
-    isSoftwareDomain ? ruHabr : (ruYandex.length > 0 ? ruYandex : ruWeb),
-    ruWiki,
-    ruWeb,
-    ruOpenAlex,
-    isSoftwareDomain ? ruYandex : []
-  ).slice(0, 5);
-
-  const brPool = includeBrPole
-    ? interleaveArrays(brWeb, brWiki, brOpenAlex).slice(0, 5)
-    : [];
-
-  return selectMultiPolarTopResults(
-    {
-      directCandidates: wantsGitHub ? [...directCandidates, ...cnGitHub] : directCandidates,
-      usPool,
-      cnPool,
-      dePool,
-      jpPool,
-      krPool,
-      ruPool,
-      brPool,
-      globalPool: [...usWeb.slice(1), ...cnWeb.slice(1), ...ruWeb.slice(1), ...brWeb.slice(1), ...cnGitHub, ...usArxiv]
-    },
-    totalCount,
-    query,
-    effectiveScope
-  );
-}
-
-const headlineTranslationCache = new Map();
-
-/**
- * Traduz automaticamente os assuntos/headlines (`title`) das fontes extraídas (EUA, China, Alemanha,
- * Japão, Coreia do Sul, Rússia, Brasil) para o idioma de busca selecionado (`searchLang`),
- * preservando a bandeira geopolítica (`[🇺🇸 US]`, `[🇨🇳 CN]`, `[🇩🇪 DE]`, `[🇯🇵 JP]`, `[🇰🇷 KR]`, `[🇷🇺 RU]`, `[🇧🇷 BR]`)
- * e a atribuição final da fonte (`— Wikipedia (JA)`, `— Habr Engineering`, etc.).
- */
-async function localizeSourceHeadlines(sources = [], targetLang = 'pt-BR', {
-  httpRequest = request,
-  timeoutMs = 5500
-} = {}) {
-  if (!Array.isArray(sources) || sources.length === 0) return [];
-  // Em testes unitários offline que injetam um mock de requestFn para busca/extração, mantém títulos determinísticos
-  if (httpRequest !== request) return sources;
-
-  const langKey = normalizeSearchLang(targetLang);
-  const langSpec = SEARCH_LANGUAGES[langKey] || SEARCH_LANGUAGES['pt-BR'];
-  const tl = langSpec.tl || 'pt';
-
-  const detectSourceLangHint = (text, badgeStr = '') => {
-    if (/[\uac00-\ud7af]/.test(text)) return 'ko';
-    if (/[\u3040-\u30ff]/.test(text)) return 'ja';
-    if (/[\u4e00-\u9fff]/.test(text)) return badgeStr.includes('JP') ? 'ja' : 'zh-CN';
-    if (/[\u0400-\u04ff]/.test(text)) return 'ru';
-    if (/\b(the|and|for|with|using|into|from|towards|survey|benchmarking|unpacking|bridging|decision-making|knowledge|language|models|engineering)\b/i.test(text)) {
-      return 'en';
-    }
-    return 'auto';
-  };
-
-  const translateSingleSource = async (src) => {
-    if (!src || typeof src.title !== 'string') return src;
-    const rawTitle = src.title.trim();
-    if (!rawTitle) return src;
-
-    const badgeMatch = rawTitle.match(/^(\[(?:🇺🇸|🇨🇳|🇩🇪|🇯🇵|🇰🇷|🇷🇺|🇧🇷|🌍)[^\]]+\])\s*/);
-    const badge = badgeMatch ? `${badgeMatch[1]} ` : '';
-    const withoutBadge = badgeMatch ? rawTitle.slice(badgeMatch[0].length).trim() : rawTitle;
-
-    // Protege identificadores de repositório GitHub (ex: "blender/blender — Official mirror of Blender")
-    const repoMatch = withoutBadge.match(/^([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\s+[—-]\s+(.+)$/);
-    const repoPrefix = repoMatch ? `${repoMatch[1]} — ` : '';
-    const textAfterRepo = repoMatch ? repoMatch[2].trim() : withoutBadge;
-
-    // Separa o sufixo de atribuição (ex: " — Wikipedia (ZH)", " — Habr Engineering", " — Yandex Search")
-    const suffixMatch = !repoMatch
-      ? textAfterRepo.match(/(\s+—\s+(?:Wikipedia\s*\([A-Z]{2}\)|Habr(?:\s+Engineering)?|Yandex(?:\s+Search|\s*\/\/\s*CyberLeninka)?|ArXiv\s+Global\s+Preprint|GitHub\s+Repository))$/)
-      : null;
-    const suffix = suffixMatch ? suffixMatch[1] : '';
-    const coreSubject = suffixMatch
-      ? textAfterRepo.slice(0, textAfterRepo.length - suffix.length).trim()
-      : textAfterRepo;
-
-    if (!coreSubject || coreSubject.length < 3 || /^https?:\/\//i.test(coreSubject)) {
-      return src;
-    }
-
-    const sl = detectSourceLangHint(coreSubject, badge);
-    const cacheKey = `${sl}->${tl}::${coreSubject}`;
-    let translatedCore = headlineTranslationCache.get(cacheKey);
-
-    if (!translatedCore && Date.now() >= gtxRateLimitedUntil) {
-      for (let attempt = 1; attempt <= 2; attempt++) {
-        if (Date.now() < gtxRateLimitedUntil) break;
-        try {
-          const gtxUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${encodeURIComponent(sl)}&tl=${encodeURIComponent(tl)}&dt=t&q=${encodeURIComponent(coreSubject)}`;
-          const res = await httpRequest(gtxUrl, {
-            method: 'GET',
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/131.0.0.0 Safari/537.36',
-              'Accept': 'application/json'
-            },
-            headersTimeout: timeoutMs,
-            bodyTimeout: timeoutMs
-          });
-          if (res.statusCode === 200) {
-            const payload = await res.body.json();
-            if (Array.isArray(payload?.[0])) {
-              let joined = payload[0]
-                .map((seg) => (Array.isArray(seg) && typeof seg[0] === 'string' ? seg[0] : ''))
-                .join('')
-                .replace(/\bFundi[çc][ãa]o\s+Palantir\b/gi, 'Palantir Foundry')
-                .replace(/\s+/g, ' ')
-                .trim();
-              if (tl === 'pt') {
-                joined = joined
-                  .replace(/\bKnowledge\s+Graphs\b/gi, 'Grafos de Conhecimento')
-                  .replace(/\bKnowledge\s+Graph\b/gi, 'Grafo de Conhecimento')
-                  .replace(/\bLarge\s+Language\s+Models\b/gi, 'Grandes Modelos de Linguagem (LLMs)');
-              }
-              if (joined.length >= 2) {
-                translatedCore = joined;
-                if (headlineTranslationCache.size > 500) {
-                  headlineTranslationCache.clear();
-                }
-                headlineTranslationCache.set(cacheKey, translatedCore);
-                break;
-              }
-            }
-          } else {
-            if (res.statusCode === 429 || res.statusCode === 403) {
-              gtxRateLimitedUntil = Date.now() + 180_000;
-            }
-            if (res.body && typeof res.body.dump === 'function') {
-              await res.body.dump().catch(() => {});
-            }
-            if (res.statusCode === 429 || res.statusCode === 403) break;
-          }
-        } catch (_) {
-          // Aguarda breve backoff antes da próxima tentativa
-        }
-        if (attempt < 2) {
-          await new Promise((r) => setTimeout(r, attempt * 180));
-        }
-      }
-    }
-
-    if (!translatedCore) {
-      return src;
-    }
-
-    const newTitle = `${badge}${repoPrefix}${translatedCore}${suffix}`.replace(/\s+/g, ' ').trim();
-    return {
-      ...src,
-      originalTitle: rawTitle,
-      title: newTitle
-    };
-  };
-
-  // Executa em lotes concorrentes de até 4 requisições simultâneas para evitar rate-limit/burst drop
-  const results = new Array(sources.length);
-  const concurrency = Math.min(4, sources.length);
-  let nextIdx = 0;
-
-  const worker = async () => {
-    while (nextIdx < sources.length) {
-      const idx = nextIdx++;
-      results[idx] = await translateSingleSource(sources[idx]);
-    }
-  };
-
-  await Promise.all(Array.from({ length: concurrency }, () => worker()));
-  return results;
-}
-
-/**
- * Pesquisa preprints científicos globais via ArXiv API (CS, Cryptography & Security, Distributed Computing, Physics, Quantitative Biology).
- */
-async function searchArxivGlobal(query, { httpRequest = request, timeoutMs = 4500, count = 3 } = {}) {
+async function searchArxivGlobal(query, { httpRequest = request, timeoutMs = 3500, count = 3, signal = null } = {}) {
+  if (signal?.aborted) return [];
   const tokens = extractSubjectTokens(query).slice(0, 5);
   if (tokens.length === 0) return [];
 
   try {
     const apiUrl = `https://export.arxiv.org/api/query?search_query=all:${encodeURIComponent(tokens.join(' '))}&max_results=${count}`;
-    const res = await httpRequest(apiUrl, {
-      method: 'GET',
-      headers: { 'User-Agent': 'DeepEvil/1.0 (Global Research Engine)' },
-      headersTimeout: timeoutMs,
-      bodyTimeout: timeoutMs
-    });
-    if (res.statusCode !== 200) return [];
+    const res = await httpRequest(
+      apiUrl,
+      buildRequestOpts(httpRequest, {
+        method: 'GET',
+        headers: { 'User-Agent': 'DeepEvil/1.0 (Global Research Engine)' },
+        headersTimeout: timeoutMs,
+        bodyTimeout: timeoutMs,
+        signal
+      })
+    );
+    if (res.statusCode !== 200) {
+      await drainBody(res);
+      return [];
+    }
     const xml = await res.body.text();
-    const dom = new JSDOM(xml, { contentType: 'text/xml' });
-    const entries = [...dom.window.document.querySelectorAll('entry')];
+    const doc = new DOMParser().parseFromString(xml, 'text/xml');
+    const entries = [...doc.querySelectorAll('entry')];
     const candidates = [];
 
     for (const entry of entries) {
       const idUrl = String(entry.querySelector('id')?.textContent || '').trim().replace(/^http:\/\//i, 'https://');
       const title = String(entry.querySelector('title')?.textContent || '').replace(/\s+/g, ' ').trim();
       const summary = String(entry.querySelector('summary')?.textContent || '').replace(/\s+/g, ' ').trim();
+      const publishedRaw = String(entry.querySelector('published')?.textContent || '').trim();
+      const pubYear = publishedRaw ? Number.parseInt(publishedRaw.slice(0, 4), 10) : null;
       if (!idUrl || !title) continue;
       candidates.push({
         url: idUrl,
         title: `${title} — ArXiv Global Preprint`,
-        description: summary
+        description: summary,
+        publishedYear: Number.isInteger(pubYear) ? pubYear : undefined,
+        engine: 'arxiv',
+        engineRank: candidates.length + 1
       });
     }
     return candidates;
@@ -3123,24 +1514,32 @@ async function searchArxivGlobal(query, { httpRequest = request, timeoutMs = 450
 }
 
 /**
- * Pesquisa artigos de engenharia, arquitetura e segurança mundial via HackerNews Algolia Global API.
+ * Pesquisa engenharia e segurança via HackerNews Algolia API.
  */
-async function searchHackerNewsGlobal(query, { httpRequest = request, timeoutMs = 4000, count = 4 } = {}) {
+async function searchHackerNewsGlobal(query, { httpRequest = request, timeoutMs = 3200, count = 4, signal = null } = {}) {
+  if (signal?.aborted) return [];
   const tokens = extractSubjectTokens(query).slice(0, 5);
   if (tokens.length === 0) return [];
 
   try {
     const apiUrl = `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(tokens.join(' '))}&tags=story&hitsPerPage=${count}`;
-    const res = await httpRequest(apiUrl, {
-      method: 'GET',
-      headers: {
-        'User-Agent': 'DeepEvil/1.0 (Global Research Engine)',
-        'Accept': 'application/json'
-      },
-      headersTimeout: timeoutMs,
-      bodyTimeout: timeoutMs
-    });
-    if (res.statusCode !== 200) return [];
+    const res = await httpRequest(
+      apiUrl,
+      buildRequestOpts(httpRequest, {
+        method: 'GET',
+        headers: {
+          'User-Agent': 'DeepEvil/1.0 (Global Research Engine)',
+          'Accept': 'application/json'
+        },
+        headersTimeout: timeoutMs,
+        bodyTimeout: timeoutMs,
+        signal
+      })
+    );
+    if (res.statusCode !== 200) {
+      await drainBody(res);
+      return [];
+    }
     const data = await res.body.json();
     const hits = Array.isArray(data?.hits) ? data.hits : [];
     const candidates = [];
@@ -3150,7 +1549,9 @@ async function searchHackerNewsGlobal(query, { httpRequest = request, timeoutMs 
       candidates.push({
         url: String(h.url),
         title: String(h.title).trim(),
-        description: String(h.story_text || `${h.title} — Technical engineering reference (${h.points || 0} pts, ${h.num_comments || 0} comments on HN).`).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+        description: String(h.story_text || `${h.title} (${h.points || 0} pts, ${h.num_comments || 0} comments on HN)`).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
+        engine: 'hn',
+        engineRank: candidates.length + 1
       });
     }
     return candidates;
@@ -3160,24 +1561,32 @@ async function searchHackerNewsGlobal(query, { httpRequest = request, timeoutMs 
 }
 
 /**
- * Pesquisa implementações open-source, arquiteturas e ferramentas técnicas via GitHub Global Search API.
+ * Pesquisa repositórios open-source via GitHub Search API.
  */
-async function searchGitHubGlobal(query, { httpRequest = request, timeoutMs = 4000, count = 3 } = {}) {
+async function searchGitHubGlobal(query, { httpRequest = request, timeoutMs = 3200, count = 3, signal = null } = {}) {
+  if (signal?.aborted) return [];
   const tokens = extractSubjectTokens(query).slice(0, 4);
   if (tokens.length === 0) return [];
 
   try {
     const apiUrl = `https://api.github.com/search/repositories?q=${encodeURIComponent(tokens.join(' '))}&sort=stars&order=desc&per_page=${count}`;
-    const res = await httpRequest(apiUrl, {
-      method: 'GET',
-      headers: {
-        'User-Agent': 'DeepEvil/1.0 (Global Research Engine)',
-        'Accept': 'application/vnd.github+json'
-      },
-      headersTimeout: timeoutMs,
-      bodyTimeout: timeoutMs
-    });
-    if (res.statusCode !== 200) return [];
+    const res = await httpRequest(
+      apiUrl,
+      buildRequestOpts(httpRequest, {
+        method: 'GET',
+        headers: {
+          'User-Agent': 'DeepEvil/1.0 (Global Research Engine)',
+          'Accept': 'application/vnd.github+json'
+        },
+        headersTimeout: timeoutMs,
+        bodyTimeout: timeoutMs,
+        signal
+      })
+    );
+    if (res.statusCode !== 200) {
+      await drainBody(res);
+      return [];
+    }
     const data = await res.body.json();
     const items = Array.isArray(data?.items) ? data.items : [];
     const candidates = [];
@@ -3191,7 +1600,9 @@ async function searchGitHubGlobal(query, { httpRequest = request, timeoutMs = 40
       candidates.push({
         url: String(repo.html_url),
         title: `${repo.full_name} — GitHub Repository`,
-        description: `${desc}${lang}${topics} (${repo.stargazers_count || 0} stars) — Official open-source repository and technical implementation.`
+        description: `${desc}${lang}${topics} (${repo.stargazers_count || 0} stars)`.trim(),
+        engine: 'github',
+        engineRank: candidates.length + 1
       });
     }
     return candidates;
@@ -3201,10 +1612,17 @@ async function searchGitHubGlobal(query, { httpRequest = request, timeoutMs = 40
 }
 
 /**
- * Busca web via Bing Global HTML (`adlt=off`, `ensearch=1`, `setmkt=en-US`, `setlang=en-US`)
- * sem limitação geográfica ao Brasil, decodificando links `u=a1<base64url>` e filtrando páginas de honeypot.
+ * Busca web via Bing Global HTML (`adlt=off`, `ensearch=1`, `setmkt=en-US`) usando linkedom.
  */
-async function searchBingHtml(query, { httpRequest = request, timeoutMs = 8000, count = MAX_RESULTS, subjectContext = '', searchScope = 'global' } = {}) {
+async function searchBingHtml(query, {
+  httpRequest = request,
+  timeoutMs = 3500,
+  count = MAX_RESULTS,
+  subjectContext = '',
+  searchScope = 'global',
+  signal = null
+} = {}) {
+  if (signal?.aborted) return [];
   const effectiveScope = normalizeSearchScope(searchScope);
   const isBrazilMode = effectiveScope === 'brazil' || (effectiveScope !== 'external' && isExplicitBrazilQuery(query));
   const effectiveQuery = isBrazilMode ? String(query || '').trim() : toGlobalResearchQuery(query);
@@ -3221,26 +1639,30 @@ async function searchBingHtml(query, { httpRequest = request, timeoutMs = 8000, 
   }
 
   try {
-    const response = await httpRequest(url.toString(), {
-      method: 'GET',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': isBrazilMode ? 'pt-BR,pt;q=0.9,en;q=0.7' : GLOBAL_ACCEPT_LANGUAGE,
-        'Cookie': isBrazilMode ? 'SRCHHPGUSR=ADLT=OFF&NRSLT=10&_EDGE_S=mkt=pt-br' : 'SRCHHPGUSR=ADLT=OFF&NRSLT=10&_EDGE_S=mkt=en-us'
-      },
-      headersTimeout: timeoutMs,
-      bodyTimeout: timeoutMs
-    });
+    const response = await httpRequest(
+      url.toString(),
+      buildRequestOpts(httpRequest, {
+        method: 'GET',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': isBrazilMode ? 'pt-BR,pt;q=0.9,en;q=0.7' : GLOBAL_ACCEPT_LANGUAGE,
+          'Cookie': isBrazilMode ? 'SRCHHPGUSR=ADLT=OFF&NRSLT=10&_EDGE_S=mkt=pt-br' : 'SRCHHPGUSR=ADLT=OFF&NRSLT=10&_EDGE_S=mkt=en-us'
+        },
+        headersTimeout: timeoutMs,
+        bodyTimeout: timeoutMs,
+        signal
+      })
+    );
 
     if (response.statusCode !== 200) {
+      await drainBody(response);
       return [];
     }
 
     const html = await response.body.text();
-    const dom = new JSDOM(html);
-    const doc = dom.window.document;
-    const items = [...doc.querySelectorAll('li.b_algo')];
+    const { document } = parseHTML(html);
+    const items = [...document.querySelectorAll('li.b_algo')];
 
     const subjectTokens = extractSubjectTokens(`${query} ${effectiveQuery} ${subjectContext}`);
     const isRealNetworkCall = httpRequest === request;
@@ -3266,12 +1688,11 @@ async function searchBingHtml(query, { httpRequest = request, timeoutMs = 8000, 
 
       if (!resolvedUrl.startsWith('http') || resolvedUrl.includes('bing.com')) continue;
       const snippetEl = li.querySelector('.b_caption p, .b_lineclamp2, .b_lineclamp3');
-      const title = String(a.textContent || '').trim();
-      const description = String(snippetEl?.textContent || '').trim();
+      const title = String(a.textContent || '').replace(/\s+/g, ' ').trim();
+      const description = String(snippetEl?.textContent || '').replace(/\s+/g, ' ').trim();
 
-      // Anti-Honeypot & First-Word Truncation Filter: descarta páginas injetadas pelo Bing quando ele trunca queries multi-palavra na 1ª palavra (ex.: "End" -> endclothing.com, "site" -> Google Sites)
       if (isRealNetworkCall && subjectTokens.length > 0) {
-        const hay = `${title} ${description}`.replace(/[\u2010-\u2015\u2212]/g, '-').toLowerCase();
+        const hay = normalizeHyphens(`${title} ${description}`).toLowerCase();
         const matchedTokens = subjectTokens.filter((tok) => {
           if (tok.length >= 4) return hay.includes(tok);
           const escaped = tok.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -3285,6 +1706,8 @@ async function searchBingHtml(query, { httpRequest = request, timeoutMs = 8000, 
         url: resolvedUrl,
         title,
         description,
+        engine: 'bing',
+        engineRank: candidates.length + 1,
         ...(isBrazilMode ? { countryPole: 'BR' } : {})
       });
     }
@@ -3296,10 +1719,16 @@ async function searchBingHtml(query, { httpRequest = request, timeoutMs = 8000, 
 }
 
 /**
- * Fallback complementar via API JSON da Wikipédia Global (`en.wikipedia.org` em 1º lugar,
- * seguido de `pt.wikipedia.org`) para garantir fontes enciclopédicas internacionais profundas.
+ * Fallback complementar via API JSON da Wikipédia Global (`en.wikipedia.org` primeiro).
  */
-async function searchWikipediaFallback(query, { httpRequest = request, timeoutMs = 6000, count = MAX_RESULTS, enConcepts = [] } = {}) {
+async function searchWikipediaFallback(query, {
+  httpRequest = request,
+  timeoutMs = 3500,
+  count = MAX_RESULTS,
+  enConcepts = [],
+  signal = null
+} = {}) {
+  if (signal?.aborted) return [];
   const globalQuery = toGlobalResearchQuery(query)
     .replace(/\b(synthesis|composition|architecture|mechanism|internals|overview|technical|comparison|differences)\b/gi, ' ')
     .replace(/\s+/g, ' ')
@@ -3311,12 +1740,12 @@ async function searchWikipediaFallback(query, { httpRequest = request, timeoutMs
 
   if (!globalQuery && !strippedOriginal) return [];
 
-  // Prioriza English Wikipedia (6.9M+ artigos técnicos completos) antes de PT, exceto se for consulta explícita sobre o Brasil
   const langOrder = isExplicitBrazilQuery(query) ? ['pt', 'en'] : ['en', 'pt'];
   const candidates = [];
   const isEntertainmentQuery = /\b(banda|m[úu]sica|filme|[áa]lbum|band|movie|song|game|jogo)\b/i.test(query);
 
   for (const lang of langOrder) {
+    if (signal?.aborted) break;
     const conceptHint = lang === 'en' && Array.isArray(enConcepts) && enConcepts.length > 0
       ? enConcepts[0]
       : '';
@@ -3327,16 +1756,23 @@ async function searchWikipediaFallback(query, { httpRequest = request, timeoutMs
 
     try {
       const apiUrl = `https://${lang}.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(targetQuery)}&utf8=&format=json&srlimit=${count}`;
-      const res = await httpRequest(apiUrl, {
-        method: 'GET',
-        headers: {
-          'User-Agent': 'DeepEvil/1.0 (Global Research Engine)',
-          'Accept-Language': GLOBAL_ACCEPT_LANGUAGE
-        },
-        headersTimeout: timeoutMs,
-        bodyTimeout: timeoutMs
-      });
-      if (res.statusCode !== 200) continue;
+      const res = await httpRequest(
+        apiUrl,
+        buildRequestOpts(httpRequest, {
+          method: 'GET',
+          headers: {
+            'User-Agent': 'DeepEvil/1.0 (Global Research Engine)',
+            'Accept-Language': GLOBAL_ACCEPT_LANGUAGE
+          },
+          headersTimeout: timeoutMs,
+          bodyTimeout: timeoutMs,
+          signal
+        })
+      );
+      if (res.statusCode !== 200) {
+        await drainBody(res);
+        continue;
+      }
       const data = await res.body.json();
       const searchItems = Array.isArray(data?.query?.search) ? data.query.search : [];
       for (const s of searchItems) {
@@ -3348,23 +1784,472 @@ async function searchWikipediaFallback(query, { httpRequest = request, timeoutMs
         candidates.push({
           url: `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(String(s.title).replace(/ /g, '_'))}`,
           title: `${s.title} — Wikipedia (${lang.toUpperCase()})`,
-          description: snippetClean
+          description: snippetClean,
+          engine: 'wikipedia',
+          engineRank: candidates.length + 1
         });
       }
       if (candidates.length >= count) break;
-    } catch (_) {
-      // Continua para o próximo idioma
-    }
+    } catch (_) {}
   }
   return normalizeTopResults(candidates, count, `${query} ${(enConcepts || []).join(' ')}`);
 }
 
 /**
- * Busca web direta resiliente multi-motor em modo Multi-Polo Global (`kl=wt-wt` no DuckDuckGo +
- * Federação Geopolítica Paralela 🇺🇸 US + 🇨🇳 China + 🇷🇺 Rússia),
- * 100% livre de trava regional no Brasil e protegida contra honeypot.
+ * Executa a Federação Retrieval-First guiada por `planSearchIntent`:
+ * - Deadline global de `4200ms` propagado via `AbortSignal` em TODAS as chamadas.
+ * - NUNCA dispara OpenAlex/CrossRef/CyberLeninka quando `plan.shouldIncludeAcademic === false` (`breaking_news`, `howto_tech`, `factual_short`).
+ * - Aplica Deduplicação Canônica + Cross-Lingual Wikipedia (QID/slug) + Re-Ranking 2 estágios (BM25 + RRF + bge-m3 opcional) + Hard Relevance Threshold + MMR.
  */
-async function searchKeylessWeb(query, { httpRequest = request, timeoutMs = 8000, count = MAX_RESULTS, searchScope = 'global' } = {}) {
+async function collectMultiPolarFederation(query, {
+  httpRequest = request,
+  timeoutMs = DEFAULT_SEARCH_DEADLINE_MS,
+  extraRawResults = [],
+  totalCount = MULTI_POLAR_RESULTS_COUNT,
+  searchScope = 'global',
+  focusMode = 'web',
+  searchLang = 'pt-BR',
+  env = process.env,
+  signal = null
+} = {}) {
+  const effectiveScope = normalizeSearchScope(searchScope);
+  const deadlineMs = Number(env?.SEARCH_DEADLINE_MS || timeoutMs || DEFAULT_SEARCH_DEADLINE_MS);
+  const { signal: deadlineSignal, cleanup } = createDeadline(deadlineMs, signal);
+
+  try {
+    const basePoles = buildMultiPolarQueries(query, focusMode);
+    const plan = basePoles.plan || planSearchIntent(query, { focusMode, searchScope: effectiveScope });
+
+    // Só traduz polos para 6 idiomas se a intenção realmente vai usar federação multi-polo enciclopédica/acadêmica
+    const shouldTranslatePoles =
+      httpRequest === request &&
+      effectiveScope !== 'brazil' &&
+      plan.intent !== 'breaking_news' &&
+      plan.intent !== 'code_repo';
+
+    // Dispara tradução multi-polo e Fase 0 (coleta web orgânica) EM PARALELO para economizar ~1.5s de espera
+    const polesPromise = shouldTranslatePoles
+      ? enrichMultiPolarQueriesWithTranslation(basePoles, query, {
+          httpRequest,
+          timeoutMs: 1400,
+          signal: deadlineSignal
+        }).catch(() => basePoles)
+      : Promise.resolve(basePoles);
+
+    let organicSeedResults = Array.isArray(extraRawResults) ? [...extraRawResults] : [];
+    const phase0Promise = (async () => {
+      if (httpRequest !== request || deadlineSignal.aborted) {
+        return organicSeedResults;
+      }
+      const subQ1 = plan.subQueries[0] || basePoles.enCore || query;
+      const subQ2 = plan.subQueries[1] || '';
+      const rawTrimmed = String(query || '').trim();
+
+      const phase0Tasks = [
+        fetchQuickDuckDuckGoWeb(subQ1, {
+          httpRequest,
+          timeoutMs: 2200,
+          count: 8,
+          kl: effectiveScope === 'brazil' ? 'br-pt' : 'wt-wt',
+          signal: deadlineSignal
+        }),
+        subQ2 && subQ2.toLowerCase() !== subQ1.toLowerCase()
+          ? fetchQuickDuckDuckGoWeb(subQ2, {
+              httpRequest,
+              timeoutMs: 2200,
+              count: 6,
+              kl: 'wt-wt',
+              signal: deadlineSignal
+            })
+          : Promise.resolve([]),
+        plan.shouldUseNewsRss
+          ? fetchGoogleNewsRssWeb(rawTrimmed, {
+              httpRequest,
+              timeoutMs: 2000,
+              count: 6,
+              hl: 'pt-BR',
+              gl: 'BR',
+              ceid: 'BR:pt-419',
+              signal: deadlineSignal
+            })
+          : Promise.resolve([]),
+        plan.shouldUseNewsRss
+          ? fetchGoogleNewsRssWeb(subQ1, {
+              httpRequest,
+              timeoutMs: 2000,
+              count: 6,
+              hl: 'en-US',
+              gl: 'US',
+              ceid: 'US:en',
+              signal: deadlineSignal
+            })
+          : Promise.resolve([])
+      ];
+
+      const [ddg1, ddg2, gnewsPt, gnewsEn] = await Promise.all(phase0Tasks);
+      return [...ddg1, ...ddg2, ...gnewsPt, ...gnewsEn, ...organicSeedResults];
+    })();
+
+    const [poles, combinedSeeds] = await Promise.all([polesPromise, phase0Promise]);
+    if (httpRequest === request && !deadlineSignal.aborted) {
+      if (plan.intent !== 'breaking_news') {
+        await resolveCanonicalEntityFromWebAndWiki(query, poles, combinedSeeds, {
+          httpRequest,
+          timeoutMs: 1400,
+          signal: deadlineSignal
+        });
+      }
+      organicSeedResults = combinedSeeds;
+    }
+
+    const wantsGitHub = plan.intent === 'code_repo' || /https?:\/\/|\.git\b|\b(github|reposit[óo]rios?|open[-\s]?source|c[óo]digo[-\s]?aberto)\b/i.test(query);
+    const minAcademicYear = plan.targetYear
+      ? Math.max(2020, plan.targetYear - 3)
+      : (plan.freshness === 'year' ? new Date().getFullYear() - 2 : null);
+
+    const extraQueryTerms = [
+      ...(plan.subQueries || []),
+      poles.us,
+      poles.cn,
+      poles.de,
+      poles.jp,
+      poles.kr,
+      poles.ru,
+      poles.br
+    ].filter(Boolean);
+
+    // Modo 'brazil' (Só Brasil / PT-BR)
+    if (effectiveScope === 'brazil') {
+      const [directCandidates, brWiki, brOpenAlex, brBing] = await Promise.all([
+        resolveDirectUrlAndGitCandidates(query, { httpRequest, timeoutMs: 2600, signal: deadlineSignal }),
+        plan.shouldUseMultiWiki
+          ? searchWikipediaByLang(poles.brWiki, 'pt', { httpRequest, timeoutMs: 2800, count: 3, countryPole: 'BR', countryBadge: '[🇧🇷 BR]', canonicalEntity: poles.canonicalEntity, signal: deadlineSignal })
+          : Promise.resolve([]),
+        plan.shouldIncludeAcademic
+          ? searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 3000, count: 3, countryCode: 'BR', countryPole: 'BR', countryBadge: '[🇧🇷 BR]', minYear: minAcademicYear, signal: deadlineSignal })
+          : Promise.resolve([]),
+        searchBingHtml(poles.br, { httpRequest, timeoutMs: 2800, count: 5, searchScope: 'brazil', signal: deadlineSignal })
+      ]);
+
+      const brPool = [...organicSeedResults.filter((x) => !isLowSignalResult(x)), ...brBing, ...brWiki, ...brOpenAlex];
+      return selectMultiPolarTopResultsAsync(
+        { directCandidates, brPool },
+        totalCount,
+        query,
+        'brazil',
+        { plan, searchLang, env, extraQueryTerms, signal: deadlineSignal, isMock: httpRequest !== request }
+      );
+    }
+
+    const includeBrPole = effectiveScope !== 'external';
+    const isDeepMultiWiki = plan.shouldUseMultiWiki && plan.intent === 'deep_research';
+    const useLightWiki = plan.shouldUseMultiWiki && !isDeepMultiWiki; // factual_short / howto_tech / secops: no máximo EN + PT
+
+    const [
+      directCandidates,
+      usOpenAlex,
+      usHn,
+      usArxiv,
+      usWiki,
+      usBing,
+      cnOpenAlex,
+      cnWiki,
+      cnGitHub,
+      deOpenAlex,
+      deWiki,
+      jpOpenAlex,
+      jpWiki,
+      krOpenAlex,
+      krWiki,
+      ruHabr,
+      ruYandex,
+      ruOpenAlex,
+      ruWiki,
+      brWiki,
+      brOpenAlex
+    ] = await Promise.all([
+      resolveDirectUrlAndGitCandidates(query, { httpRequest, timeoutMs: 2600, signal: deadlineSignal }),
+      // US Pole
+      plan.shouldIncludeAcademic
+        ? searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 3000, count: 3, countryCode: 'US', countryPole: 'US', countryBadge: '[🇺🇸 US]', minYear: minAcademicYear, signal: deadlineSignal })
+        : Promise.resolve([]),
+      plan.shouldUseCodeSources
+        ? searchHackerNewsGlobal(poles.enCore, { httpRequest, timeoutMs: 2800, count: 3, signal: deadlineSignal })
+        : Promise.resolve([]),
+      plan.shouldIncludeAcademic && (plan.domain === 'software_cs' || plan.domain === 'exact_sciences')
+        ? searchArxivGlobal(poles.academicCore, { httpRequest, timeoutMs: 3000, count: 2, signal: deadlineSignal })
+        : Promise.resolve([]),
+      (isDeepMultiWiki || useLightWiki)
+        ? searchWikipediaByLang(poles.usWiki || poles.enCore, 'en', { httpRequest, timeoutMs: 2600, count: 2, countryPole: 'US', countryBadge: '[🇺🇸 US]', canonicalEntity: poles.canonicalEntity, signal: deadlineSignal })
+        : Promise.resolve([]),
+      searchBingHtml(plan.subQueries[0] || poles.us, { httpRequest, timeoutMs: 2800, count: 5, searchScope: 'external', signal: deadlineSignal }),
+      // China Pole
+      plan.shouldIncludeAcademic
+        ? searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 3000, count: 2, countryCode: 'CN', countryPole: 'CN', countryBadge: '[🇨🇳 CN]', minYear: minAcademicYear, signal: deadlineSignal })
+        : Promise.resolve([]),
+      isDeepMultiWiki
+        ? searchWikipediaByLang(poles.cnWiki, 'zh', { httpRequest, timeoutMs: 2600, count: 2, countryPole: 'CN', countryBadge: '[🇨🇳 CN]', canonicalEntity: poles.canonicalEntity, signal: deadlineSignal })
+        : Promise.resolve([]),
+      plan.shouldUseCodeSources
+        ? searchGitHubGlobal(poles.enCore, { httpRequest, timeoutMs: 2800, count: wantsGitHub ? 5 : 3, signal: deadlineSignal })
+        : Promise.resolve([]),
+      // Germany Pole
+      plan.shouldIncludeAcademic
+        ? searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 3000, count: 2, countryCode: 'DE', countryPole: 'DE', countryBadge: '[🇩🇪 DE]', minYear: minAcademicYear, signal: deadlineSignal })
+        : Promise.resolve([]),
+      isDeepMultiWiki
+        ? searchWikipediaByLang(poles.deWiki, 'de', { httpRequest, timeoutMs: 2600, count: 2, countryPole: 'DE', countryBadge: '[🇩🇪 DE]', canonicalEntity: poles.canonicalEntity, signal: deadlineSignal })
+        : Promise.resolve([]),
+      // Japan Pole
+      plan.shouldIncludeAcademic
+        ? searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 3000, count: 2, countryCode: 'JP', countryPole: 'JP', countryBadge: '[🇯🇵 JP]', minYear: minAcademicYear, signal: deadlineSignal })
+        : Promise.resolve([]),
+      isDeepMultiWiki
+        ? searchWikipediaByLang(poles.jpWiki, 'ja', { httpRequest, timeoutMs: 2600, count: 2, countryPole: 'JP', countryBadge: '[🇯🇵 JP]', canonicalEntity: poles.canonicalEntity, signal: deadlineSignal })
+        : Promise.resolve([]),
+      // South Korea Pole
+      plan.shouldIncludeAcademic
+        ? searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 3000, count: 2, countryCode: 'KR', countryPole: 'KR', countryBadge: '[🇰🇷 KR]', minYear: minAcademicYear, signal: deadlineSignal })
+        : Promise.resolve([]),
+      isDeepMultiWiki
+        ? searchWikipediaByLang(poles.krWiki, 'ko', { httpRequest, timeoutMs: 2600, count: 2, countryPole: 'KR', countryBadge: '[🇰🇷 KR]', canonicalEntity: poles.canonicalEntity, signal: deadlineSignal })
+        : Promise.resolve([]),
+      // Russia Pole
+      plan.shouldUseCodeSources
+        ? searchHabrRussia(poles.ru, { httpRequest, timeoutMs: 2800, count: 2, fallbackQuery: poles.enCore, signal: deadlineSignal })
+        : Promise.resolve([]),
+      plan.shouldIncludeAcademic
+        ? searchYandexRussia(poles.ruWiki || poles.ru, { httpRequest, timeoutMs: 2800, count: 2, fallbackQuery: poles.enCore, env, allowAcademic: true, minYear: minAcademicYear, signal: deadlineSignal })
+        : Promise.resolve([]),
+      plan.shouldIncludeAcademic
+        ? searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 3000, count: 2, countryCode: 'RU', countryPole: 'RU', countryBadge: '[🇷🇺 RU]', minYear: minAcademicYear, signal: deadlineSignal })
+        : Promise.resolve([]),
+      isDeepMultiWiki
+        ? searchWikipediaByLang(poles.ruWiki, 'ru', { httpRequest, timeoutMs: 2600, count: 2, countryPole: 'RU', countryBadge: '[🇷🇺 RU]', canonicalEntity: poles.canonicalEntity, signal: deadlineSignal })
+        : Promise.resolve([]),
+      // Brazil / Portuguese Pole
+      includeBrPole && (isDeepMultiWiki || useLightWiki)
+        ? searchWikipediaByLang(poles.brWiki, 'pt', { httpRequest, timeoutMs: 2600, count: 2, countryPole: 'BR', countryBadge: '[🇧🇷 BR]', canonicalEntity: poles.canonicalEntity, signal: deadlineSignal })
+        : Promise.resolve([]),
+      includeBrPole && plan.shouldIncludeAcademic
+        ? searchOpenAlexGlobal(poles.academicCore, { httpRequest, timeoutMs: 3000, count: 2, countryCode: 'BR', countryPole: 'BR', countryBadge: '[🇧🇷 BR]', minYear: minAcademicYear, signal: deadlineSignal })
+        : Promise.resolve([])
+    ]);
+
+    const { usWeb, cnWeb, deWeb, jpWeb, krWeb, ruWeb, brWeb } = routeOrganicWebResultsToPoles(
+      [...organicSeedResults, ...(usBing || [])],
+      query,
+      includeBrPole
+    );
+
+    const cnGitHubBadged = (cnGitHub || []).map((item) => ({
+      ...item,
+      title: String(item.title || '').startsWith('[') ? item.title : `[🇨🇳 CN] ${item.title}`,
+      countryPole: 'CN'
+    }));
+
+    return selectMultiPolarTopResultsAsync(
+      {
+        directCandidates: wantsGitHub ? [...directCandidates, ...cnGitHub] : directCandidates,
+        usPool: [...usWeb, ...usHn, ...usWiki, ...usOpenAlex, ...usArxiv],
+        cnPool: [...cnWeb, ...cnGitHubBadged, ...cnWiki, ...cnOpenAlex],
+        dePool: [...deWeb, ...deWiki, ...deOpenAlex],
+        jpPool: [...jpWeb, ...jpWiki, ...jpOpenAlex],
+        krPool: [...krWeb, ...krWiki, ...krOpenAlex],
+        ruPool: [...ruWeb, ...ruHabr, ...ruYandex, ...ruWiki, ...ruOpenAlex],
+        brPool: includeBrPole ? [...brWeb, ...brWiki, ...brOpenAlex] : [],
+        globalPool: [...cnGitHub, ...usArxiv]
+      },
+      totalCount,
+      query,
+      effectiveScope,
+      {
+        plan,
+        searchLang,
+        env,
+        extraQueryTerms,
+        signal: deadlineSignal,
+        isMock: httpRequest !== request,
+        strictThreshold: httpRequest === request
+      }
+    );
+  } finally {
+    cleanup();
+  }
+}
+
+/**
+ * Consulta SearXNG (`/search?q=...&format=json`) preservando e priorizando o ranking orgânico do SearXNG!
+ * - Envia `time_range` (`day`/`week`/`year`) quando o temporal router detectar `freshness` em execução real.
+ * - Enriquecimento cirúrgico conforme `plan.intent` (NUNCA atropela o SearXNG com 7 Wikipedias!).
+ */
+async function searchSearxng(query, {
+  baseUrl = DEFAULT_SEARXNG_URL,
+  httpRequest = request,
+  timeoutMs = DEFAULT_SEARCH_DEADLINE_MS,
+  count = MAX_RESULTS,
+  searchScope = 'global',
+  focusMode = 'web',
+  searchLang = 'pt-BR',
+  env = process.env,
+  signal = null
+} = {}) {
+  const effectiveScope = normalizeSearchScope(searchScope);
+  const cleanBase = String(baseUrl || DEFAULT_SEARXNG_URL).trim().replace(/\/+$/, '');
+  const plan = planSearchIntent(query, { focusMode, searchScope: effectiveScope });
+  const isRealNetwork = httpRequest === request;
+
+  const url = new URL(`${cleanBase}/search`);
+  const effectiveQuery = isRealNetwork && effectiveScope !== 'brazil'
+    ? (plan.subQueries[0] || toGlobalResearchQuery(query))
+    : String(query || '').trim();
+  url.searchParams.set('q', effectiveQuery);
+  url.searchParams.set('format', 'json');
+  url.searchParams.set('language', effectiveScope === 'brazil' ? 'pt-BR' : 'all');
+  if (isRealNetwork && plan.searxTimeRange) {
+    url.searchParams.set('time_range', plan.searxTimeRange);
+  }
+
+  const { signal: deadlineSignal, cleanup } = createDeadline(timeoutMs, signal);
+
+  try {
+    const response = await httpRequest(
+      url.toString(),
+      buildRequestOpts(httpRequest, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+          'Accept-Language': effectiveScope === 'brazil' ? 'pt-BR,pt;q=0.9,en;q=0.7' : GLOBAL_ACCEPT_LANGUAGE,
+          'User-Agent': 'PerplexityLocal/1.0 (Global Research Engine)'
+        },
+        headersTimeout: Math.min(timeoutMs, 3500),
+        bodyTimeout: Math.min(timeoutMs, 3500),
+        signal: deadlineSignal
+      }, { localService: true })
+    );
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      await drainBody(response);
+      return {
+        results: [],
+        provider: 'searxng',
+        error: `SearXNG (${cleanBase}) retornou HTTP ${response.statusCode}`
+      };
+    }
+
+    const payload = await response.body.json();
+    const rawResults = Array.isArray(payload?.results) ? payload.results : [];
+
+    // Em mocks de teste unitário, retorna normalizado diretamente
+    if (!isRealNetwork) {
+      return {
+        results: normalizeTopResults(rawResults, count, query),
+        provider: 'searxng',
+        error: null
+      };
+    }
+
+    // Em execução real: se SearXNG devolveu resultados válidos, PRESERVA e PRIORIZA o ranking orgânico do SearXNG!
+    if (rawResults.length > 0) {
+      const searxAnnotated = rawResults
+        .filter((r) => r && typeof r.url === 'string' && !isLowSignalResult(r))
+        .map((r, idx) => ({
+          url: r.url,
+          title: String(r.title || '').replace(/\s+/g, ' ').trim(),
+          description: String(r.content || r.description || '').replace(/\s+/g, ' ').trim(),
+          engine: 'searxng',
+          engineRank: idx + 1,
+          engines: Array.isArray(r.engines) && r.engines.length > 0 ? ['searxng', ...r.engines] : ['searxng'],
+          pubDate: r.publishedDate || undefined
+        }));
+
+      // Enriquecimento leve e cirúrgico apenas conforme a intenção real (NUNCA 7 Wikipedias!)
+      const complementTasks = [
+        resolveDirectUrlAndGitCandidates(query, { httpRequest, timeoutMs: 1800, signal: deadlineSignal })
+      ];
+      if (plan.intent === 'code_repo' || plan.intent === 'secops') {
+        complementTasks.push(searchGitHubGlobal(plan.globalQuery, { httpRequest, timeoutMs: 1800, count: 3, signal: deadlineSignal }));
+      }
+      if (plan.intent === 'breaking_news' && searxAnnotated.length < count) {
+        complementTasks.push(fetchGoogleNewsRssWeb(plan.globalQuery, { httpRequest, timeoutMs: 1800, count: 4, hl: 'en-US', gl: 'US', ceid: 'US:en', signal: deadlineSignal }));
+      }
+      if (plan.shouldIncludeAcademic && searxAnnotated.length < count) {
+        complementTasks.push(searchArxivGlobal(plan.globalQuery, { httpRequest, timeoutMs: 1800, count: 2, signal: deadlineSignal }));
+      }
+
+      const complements = (await Promise.all(complementTasks)).flat();
+      const targetCount = Math.max(count, Math.min(MULTI_POLAR_RESULTS_COUNT, searxAnnotated.length + complements.length));
+
+      const filteredByScope = [...complements, ...searxAnnotated].filter((item) => {
+        if (effectiveScope === 'external') {
+          return !isPortugueseOrBrazilianBubbleResult(item, '', true);
+        }
+        if (effectiveScope === 'brazil') {
+          return !isLowSignalResult(item);
+        }
+        return !isLowSignalResult(item);
+      });
+
+      const reranked = await rerankCandidatesAsync(filteredByScope, query, {
+        plan,
+        count: targetCount,
+        searchScope: effectiveScope,
+        searchLang,
+        env,
+        signal: deadlineSignal,
+        strictThreshold: true,
+        minRelevanceThreshold: 0.16,
+        maxPerDomain: plan.intent === 'code_repo' ? 5 : 2
+      });
+
+      return {
+        results: reranked.length > 0 ? reranked : normalizeTopResults(searxAnnotated, count, query),
+        provider: 'searxng',
+        error: null
+      };
+    }
+
+    // Se SearXNG retornou 0 resultados, cai na Federação Retrieval-First
+    const federated = await collectMultiPolarFederation(query, {
+      httpRequest,
+      timeoutMs,
+      totalCount: MULTI_POLAR_RESULTS_COUNT,
+      searchScope: effectiveScope,
+      focusMode,
+      searchLang,
+      env,
+      signal: deadlineSignal
+    });
+
+    return {
+      results: federated,
+      provider: 'searxng',
+      error: null
+    };
+  } catch (err) {
+    return {
+      results: [],
+      provider: 'searxng',
+      error: `Falha ao consultar SearXNG (${cleanBase}): ${err?.message || String(err)}`
+    };
+  } finally {
+    cleanup();
+  }
+}
+
+/**
+ * Busca web direta resiliente multi-motor keyless (DDG + Federação Retrieval-First).
+ */
+async function searchKeylessWeb(query, {
+  httpRequest = request,
+  timeoutMs = DEFAULT_SEARCH_DEADLINE_MS,
+  count = MAX_RESULTS,
+  searchScope = 'global',
+  focusMode = 'web',
+  searchLang = 'pt-BR',
+  env = process.env,
+  signal = null
+} = {}) {
   const effectiveScope = normalizeSearchScope(searchScope);
   const isBrazilMode = effectiveScope === 'brazil' || (effectiveScope !== 'external' && isExplicitBrazilQuery(query));
   const effectiveQuery = isBrazilMode ? String(query || '').trim() : toGlobalResearchQuery(query);
@@ -3373,130 +2258,144 @@ async function searchKeylessWeb(query, { httpRequest = request, timeoutMs = 8000
   url.searchParams.set('kl', isBrazilMode ? 'br-pt' : 'wt-wt');
   url.searchParams.set('kp', '-2');
 
+  const { signal: deadlineSignal, cleanup } = createDeadline(timeoutMs, signal);
+
   let lastError = null;
   let ddgCandidates = [];
 
-  // 1. Tenta DuckDuckGo HTML
   try {
-    const response = await httpRequest(url.toString(), {
-      method: 'GET',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36',
-        'Accept-Language': isBrazilMode ? 'pt-BR,pt;q=0.9,en;q=0.7' : GLOBAL_ACCEPT_LANGUAGE
-      },
-      headersTimeout: timeoutMs,
-      bodyTimeout: timeoutMs
-    });
+    // 1. DuckDuckGo HTML
+    try {
+      const response = await httpRequest(
+        url.toString(),
+        buildRequestOpts(httpRequest, {
+          method: 'GET',
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36',
+            'Accept-Language': isBrazilMode ? 'pt-BR,pt;q=0.9,en;q=0.7' : GLOBAL_ACCEPT_LANGUAGE
+          },
+          headersTimeout: Math.min(timeoutMs, 3200),
+          bodyTimeout: Math.min(timeoutMs, 3200),
+          signal: deadlineSignal
+        })
+      );
 
-    if (response.statusCode === 200) {
-      const html = await response.body.text();
-      if (!html.includes('anomaly.js') && !html.includes('cc=botnet')) {
-        const dom = new JSDOM(html);
-        const doc = dom.window.document;
-        const anchors = [...doc.querySelectorAll('.result__a')];
+      if (response.statusCode === 200) {
+        const html = await response.body.text();
+        if (!html.includes('anomaly.js') && !html.includes('cc=botnet')) {
+          const { document } = parseHTML(html);
+          const anchors = [...document.querySelectorAll('.result__a')];
 
-        const candidates = [];
-        for (const a of anchors) {
-          const rawHref = a.getAttribute('href') || '';
-          if (!rawHref) continue;
+          const candidates = [];
+          for (const a of anchors) {
+            const rawHref = a.getAttribute('href') || '';
+            if (!rawHref) continue;
 
-          let resolvedUrl = rawHref;
-          try {
-            const wrapperUrl = new URL(rawHref, DUCKDUCKGO_HTML_ENDPOINT);
-            const uddg = wrapperUrl.searchParams.get('uddg');
-            resolvedUrl = uddg || wrapperUrl.toString();
-          } catch (_) {
-            continue;
+            let resolvedUrl = rawHref;
+            try {
+              const wrapperUrl = new URL(rawHref, DUCKDUCKGO_HTML_ENDPOINT);
+              const uddg = wrapperUrl.searchParams.get('uddg');
+              resolvedUrl = uddg || wrapperUrl.toString();
+            } catch (_) {
+              continue;
+            }
+
+            if (resolvedUrl.includes('duckduckgo.com')) continue;
+            const resultBlock = a.closest('.result, .results_links, .web-result') || a.parentElement?.parentElement;
+            const snippetEl = resultBlock ? resultBlock.querySelector('.result__snippet') : null;
+            candidates.push({
+              url: resolvedUrl,
+              title: String(a.textContent || '').replace(/\s+/g, ' ').trim(),
+              description: String(snippetEl?.textContent || '').replace(/\s+/g, ' ').trim(),
+              engine: 'ddg',
+              engineRank: candidates.length + 1,
+              ...(isBrazilMode ? { countryPole: 'BR' } : {})
+            });
           }
 
-          if (resolvedUrl.includes('duckduckgo.com')) continue;
-          const resultBlock = a.closest('.result, .results_links, .web-result') || a.parentElement?.parentElement;
-          const snippetEl = resultBlock ? resultBlock.querySelector('.result__snippet') : null;
-          candidates.push({
-            url: resolvedUrl,
-            title: String(a.textContent || '').trim(),
-            description: String(snippetEl?.textContent || '').trim(),
-            ...(isBrazilMode ? { countryPole: 'BR' } : {})
-          });
+          ddgCandidates = normalizeTopResults(candidates, count, isBrazilMode ? '' : query);
+          if (ddgCandidates.length > 0 && httpRequest !== request) {
+            return {
+              results: ddgCandidates,
+              provider: 'keyless-web',
+              error: null
+            };
+          }
         }
-
-        ddgCandidates = normalizeTopResults(candidates, count, isBrazilMode ? '' : query);
-        // Se for um mock de teste unitário (httpRequest !== request), retorna direto
-        if (ddgCandidates.length > 0 && httpRequest !== request) {
-          return {
-            results: ddgCandidates,
-            provider: 'keyless-web',
-            error: null
-          };
-        }
+      } else {
+        await drainBody(response);
+        lastError = `Busca web sem chave retornou HTTP ${response.statusCode}`;
       }
-    } else {
-      if (response.body && typeof response.body.dump === 'function') {
-        await response.body.dump().catch(() => {});
-      }
-      lastError = `Busca web sem chave retornou HTTP ${response.statusCode}`;
+    } catch (err) {
+      lastError = `Falha na busca keyless: ${err?.message || String(err)}`;
     }
-  } catch (err) {
-    lastError = `Falha na busca keyless: ${err?.message || String(err)}`;
-  }
 
-  // Se httpRequest foi injetado por um teste unitário, mantém o fluxo determinístico enxuto (Bing -> Wikipedia)
-  if (httpRequest !== request) {
-    const bingResults = await searchBingHtml(query, { httpRequest, timeoutMs, count, searchScope: effectiveScope });
-    const wikiResults = bingResults.length >= count
-      ? []
-      : await searchWikipediaFallback(query, { httpRequest, timeoutMs, count });
-    const mergedMock = normalizeTopResults([...bingResults, ...wikiResults], count, query);
+    // Fluxo determinístico enxuto para mocks de teste unitário
+    if (httpRequest !== request) {
+      const bingResults = await searchBingHtml(query, { httpRequest, timeoutMs, count, searchScope: effectiveScope, signal: deadlineSignal });
+      const wikiResults = bingResults.length >= count
+        ? []
+        : await searchWikipediaFallback(query, { httpRequest, timeoutMs, count, signal: deadlineSignal });
+      const mergedMock = normalizeTopResults([...bingResults, ...wikiResults], count, query);
+      return {
+        results: mergedMock,
+        provider: 'keyless-web',
+        error: mergedMock.length > 0 ? null : lastError
+      };
+    }
+
+    // 2. Execução real: Federação Retrieval-First
+    const multiPolarResults = await collectMultiPolarFederation(query, {
+      httpRequest,
+      timeoutMs,
+      extraRawResults: ddgCandidates,
+      totalCount: MULTI_POLAR_RESULTS_COUNT,
+      searchScope: effectiveScope,
+      focusMode,
+      searchLang,
+      env,
+      signal: deadlineSignal
+    });
+
+    if (multiPolarResults.length > 0) {
+      return {
+        results: multiPolarResults,
+        provider: 'keyless-web',
+        error: null
+      };
+    }
+
     return {
-      results: mergedMock,
+      results: [],
       provider: 'keyless-web',
-      error: mergedMock.length > 0 ? null : lastError
+      error: lastError
     };
+  } finally {
+    cleanup();
   }
-
-  // 2. Em execução real: Federação Geopolítica Multi-Polo conforme o searchScope ('global', 'external' ou 'brazil')
-  const multiPolarResults = await collectMultiPolarFederation(query, {
-    httpRequest,
-    timeoutMs,
-    extraRawResults: ddgCandidates,
-    totalCount: MULTI_POLAR_RESULTS_COUNT,
-    searchScope: effectiveScope
-  });
-
-  if (multiPolarResults.length > 0) {
-    return {
-      results: multiPolarResults,
-      provider: 'keyless-web',
-      error: null
-    };
-  }
-
-  return {
-    results: [],
-    provider: 'keyless-web',
-    error: lastError
-  };
 }
 
 /**
- * Executa a busca web Global Multi-Polo obtendo os principais resultados via undici.
- * Suporta:
- * 1) SearXNG (`SEARCH_PROVIDER=searxng` / `SEARXNG_URL=http://127.0.0.1:8888`) + Federação Multi-Polo.
+ * Entrypoint principal de busca web:
+ * 1) SearXNG (`SEARCH_PROVIDER=searxng`) com ranking orgânico preservado + `time_range`.
  * 2) Brave Search API (`BRAVE_SEARCH_API_KEY`).
- * 3) Fallback automático Multi-Polo via DuckDuckGo + Federação Geopolítica (`global`, `external`, `brazil`).
+ * 3) Fallback automático Retrieval-First Keyless.
  */
 async function searchBrave(query, options = {}) {
   const env = options.env || process.env;
   const searchScope = normalizeSearchScope(options.searchScope || env.SEARCH_SCOPE || 'global');
+  const searchLang = normalizeSearchLang(options.searchLang || 'pt-BR');
+  const focusMode = String(options.focusMode || 'web').trim().toLowerCase();
   const effectiveQuery = options.focusMode
-    ? applyFocusModeToQuery(query, options.focusMode)
+    ? applyFocusModeToQuery(query, focusMode)
     : String(query || '').trim();
   const searchProvider = String(options.provider || env.SEARCH_PROVIDER || '').trim().toLowerCase();
   const searxngUrl = String(options.searxngUrl || env.SEARXNG_URL || DEFAULT_SEARXNG_URL).trim();
   const apiKey = options.apiKey ?? env.BRAVE_SEARCH_API_KEY ?? env.BRAVE_API_KEY ?? '';
   const httpRequest = options.requestFn || request;
-  const timeoutMs = Number(options.timeoutMs || env.SEARCH_TIMEOUT_MS || 8000);
+  const timeoutMs = Number(options.timeoutMs || env.SEARCH_TIMEOUT_MS || DEFAULT_SEARCH_DEADLINE_MS);
   const count = Number(options.count || MAX_RESULTS);
+  const signal = options.signal || null;
 
   const hasValidBraveKey = Boolean(
     apiKey &&
@@ -3505,23 +2404,26 @@ async function searchBrave(query, options = {}) {
     apiKey !== 'searxng'
   );
 
-  // 1. Se options.provider === 'searxng' ou se não há chave Brave real e SEARCH_PROVIDER=searxng (e apiKey !== 'keyless')
+  // 1. SearXNG
   if (options.provider === 'searxng' || (!hasValidBraveKey && apiKey !== 'keyless' && (searchProvider === 'searxng' || apiKey === 'searxng'))) {
     const searxRes = await searchSearxng(effectiveQuery, {
       baseUrl: searxngUrl,
       httpRequest,
       timeoutMs,
       count,
-      searchScope
+      searchScope,
+      focusMode,
+      searchLang,
+      env,
+      signal
     });
     if (searxRes.results.length > 0 || options.disableKeylessFallback) {
       return searxRes;
     }
-    // Se o container SearXNG local estiver desligado, faz fallback transparente para busca web global multi-polo
-    return searchKeylessWeb(effectiveQuery, { httpRequest, timeoutMs, count, searchScope });
+    return searchKeylessWeb(effectiveQuery, { httpRequest, timeoutMs, count, searchScope, focusMode, searchLang, env, signal });
   }
 
-  // 2. Se não há chave Brave válida, tenta SearXNG local primeiro e depois busca Global Keyless Multi-Polo
+  // 2. Sem chave Brave válida -> tenta SearXNG se configurado, senão Keyless Retrieval-First
   if (!hasValidBraveKey) {
     if (options.disableKeylessFallback) {
       return {
@@ -3536,11 +2438,15 @@ async function searchBrave(query, options = {}) {
         httpRequest,
         timeoutMs,
         count,
-        searchScope
+        searchScope,
+        focusMode,
+        searchLang,
+        env,
+        signal
       });
       if (searxRes.results.length > 0) return searxRes;
     }
-    return searchKeylessWeb(effectiveQuery, { httpRequest, timeoutMs, count, searchScope });
+    return searchKeylessWeb(effectiveQuery, { httpRequest, timeoutMs, count, searchScope, focusMode, searchLang, env, signal });
   }
 
   // 3. Brave Search API Oficial
@@ -3550,25 +2456,30 @@ async function searchBrave(query, options = {}) {
   url.searchParams.set('country', searchScope === 'brazil' ? 'BR' : 'ALL');
   url.searchParams.set('text_decorations', 'false');
 
+  const { signal: deadlineSignal, cleanup } = createDeadline(timeoutMs, signal);
   try {
-    const response = await httpRequest(url.toString(), {
-      method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-        'Accept-Language': GLOBAL_ACCEPT_LANGUAGE,
-        'X-Subscription-Token': apiKey,
-        'User-Agent': 'PerplexityLocal/1.0 (Global Research Engine)'
-      },
-      headersTimeout: timeoutMs,
-      bodyTimeout: timeoutMs
-    });
+    const response = await httpRequest(
+      url.toString(),
+      buildRequestOpts(httpRequest, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+          'Accept-Language': GLOBAL_ACCEPT_LANGUAGE,
+          'X-Subscription-Token': apiKey,
+          'User-Agent': 'PerplexityLocal/1.0 (Global Research Engine)'
+        },
+        headersTimeout: timeoutMs,
+        bodyTimeout: timeoutMs,
+        signal: deadlineSignal
+      })
+    );
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
       let errText = '';
       try {
         errText = await response.body.text();
       } catch (_) {
-        // Ignora erro de leitura do corpo
+        await drainBody(response);
       }
       return {
         results: [],
@@ -3591,12 +2502,15 @@ async function searchBrave(query, options = {}) {
       provider: 'brave',
       error: `Falha ao consultar Brave Search: ${err?.message || String(err)}`
     };
+  } finally {
+    cleanup();
   }
 }
 
 module.exports = {
   MAX_RESULTS,
   MULTI_POLAR_RESULTS_COUNT,
+  DEFAULT_SEARCH_DEADLINE_MS,
   FOCUS_MODES,
   SEARCH_SCOPES,
   normalizeSearchScope,
@@ -3611,10 +2525,19 @@ module.exports = {
   isPortugueseOrBrazilianBubbleResult,
   isLowSignalResult,
   toGlobalResearchQuery,
+  rewriteQueryForTechnicalSearch,
+  extractSubjectTokens,
+  planSearchIntent,
   buildMultiPolarQueries,
+  canonicalizeUrl,
+  extractWikipediaMeta,
+  deduplicateResults,
   scoreResultCoherence,
   normalizeTopResults,
+  rerankCandidates,
+  rerankCandidatesAsync,
   selectMultiPolarTopResults,
+  selectMultiPolarTopResultsAsync,
   collectMultiPolarFederation,
   applyFocusModeToQuery,
   buildContextualSearchQuery,

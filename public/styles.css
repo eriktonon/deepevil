@@ -18,10 +18,10 @@
   --border-interactive: #343440;
   --border-strong: #525263;
 
-  /* Tipografia com alto contraste (AA/AAA) */
-  --text-primary: #f3f3f6;
-  --text-secondary: #b8b8c4;
-  --text-muted: #828292;
+  /* Tipografia com alto contraste (WCAG 2.1 AA/AAA confortável) */
+  --text-primary: #f5f5f7;
+  --text-secondary: #d0d0dc;
+  --text-muted: #9ea0b0;
 
   /* Acentos Sóbrios (Platina Escovada & Âmbar/Bronze Mineral — sem azul genérico) */
   --accent-primary: #e8e8ee;
@@ -101,10 +101,11 @@ body.no-scroll {
   overflow: hidden;
 }
 
-/* Foco visível global WCAG 2.4.7 */
+/* Foco visível global WCAG 2.4.7 + 2.4.11 (Dual-Ring High Visibility) */
 :focus-visible {
-  outline: 2px solid var(--accent-cobalt-light);
+  outline: 2px solid #f5f5f7;
   outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(226, 192, 125, 0.28);
 }
 
 /* Skip link WCAG 2.4.1 */
@@ -988,15 +989,65 @@ body.no-scroll {
   box-shadow: 0 0 0 3px rgba(201, 158, 86, 0.22);
 }
 
+.pipeline-subhint {
+  font-size: 0.78125rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+  padding-left: 17px;
+}
+
+.pipeline-progress-track {
+  width: 100%;
+  height: 4px;
+  border-radius: 999px;
+  background-color: var(--bg-elevated);
+  overflow: hidden;
+  margin-top: 2px;
+}
+
+.pipeline-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #c99e56 0%, #e8cc8c 50%, #c99e56 100%);
+  background-size: 200% 100%;
+  animation: skeletonShimmer 1.6s infinite linear;
+  transition: width 320ms var(--ease-out);
+}
+
 /* ==========================================================================
-   Skeleton Shimmer (Antes do 1º Token / TTFT)
+   Skeleton Shimmer Editorial (Antes do 1º Token / TTFT)
    ========================================================================== */
 .answer-skeleton {
   display: flex;
   flex-direction: column;
-  gap: 11px;
-  max-width: 68ch;
-  padding: 8px 0 12px;
+  gap: 12px;
+  max-width: 72ch;
+  padding: 12px 14px 16px;
+  border-radius: var(--radius-md);
+  background-color: rgba(255, 255, 255, 0.015);
+  border: 1px solid var(--border-subtle);
+}
+
+.skeleton-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.skeleton-pulse-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: var(--accent-cobalt-text);
+  animation: statusPulse 1.1s infinite ease-in-out;
+  flex-shrink: 0;
+}
+
+.skeleton-caption {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-secondary);
 }
 
 .skeleton-line {
@@ -1005,17 +1056,23 @@ body.no-scroll {
   background: linear-gradient(
     90deg,
     var(--bg-elevated) 25%,
-    #26262f 50%,
+    #282833 50%,
     var(--bg-elevated) 75%
   );
   background-size: 200% 100%;
   animation: skeletonShimmer 1.4s infinite linear;
 }
 
-.skeleton-line-lg { width: 88%; }
+.skeleton-line-heading {
+  width: 62%;
+  height: 18px;
+  margin-bottom: 4px;
+}
+
+.skeleton-line-lg { width: 90%; }
 .skeleton-line-full { width: 100%; }
-.skeleton-line-md { width: 74%; }
-.skeleton-line-sm { width: 52%; }
+.skeleton-line-md { width: 76%; }
+.skeleton-line-sm { width: 54%; }
 
 @keyframes skeletonShimmer {
   0% { background-position: 200% 0; }
@@ -1160,13 +1217,19 @@ body.no-scroll {
 }
 
 /* ==========================================================================
-   Corpo da Resposta (Prosa 68ch + Tabelas e Código a 100% da largura do card)
+   Corpo da Resposta (Leitura Editorial Confortável 72ch + Contraste AAA)
    ========================================================================== */
 .turn-answer-body {
   width: 100%;
   color: var(--text-primary);
-  font-size: 0.96875rem; /* 15.5px */
-  line-height: 1.72;
+  font-size: 1.015625rem; /* 16.25px — leitura prolongada sem fadiga visual */
+  line-height: 1.8;
+  letter-spacing: 0.004em;
+}
+
+.turn-answer-body strong {
+  color: #ffffff;
+  font-weight: 650;
 }
 
 .answer-prose-content > .answer-paragraph,
@@ -1174,28 +1237,37 @@ body.no-scroll {
 .answer-prose-content > .answer-list,
 .answer-prose-content > .answer-blockquote,
 .answer-prose-content > .answer-hr {
-  max-width: 68ch;
+  max-width: 72ch;
 }
 
 .answer-paragraph {
-  margin: 0 0 14px;
+  margin: 0 0 17px;
 }
 
 .answer-heading {
-  margin: 22px 0 10px;
-  font-size: 1.0625rem;
+  margin: 26px 0 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 1.1375rem;
   font-weight: 650;
   letter-spacing: -0.015em;
-  color: var(--text-primary);
+  line-height: 1.38;
+  color: #ffffff;
 }
 
 .answer-list {
-  margin: 0 0 14px;
-  padding-left: 22px;
+  margin: 0 0 17px;
+  padding-left: 24px;
 }
 
 .answer-list li {
-  margin-bottom: 7px;
+  margin-bottom: 9px;
+  padding-left: 2px;
+}
+
+.answer-list li::marker {
+  color: var(--accent-cobalt-text);
+  font-weight: 600;
 }
 
 .answer-list li > p {

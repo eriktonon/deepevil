@@ -215,8 +215,13 @@ function renderTopSourcesStrip(turnId, sources = []) {
 function renderAnswerSkeleton() {
   return `
     <div class="answer-skeleton" aria-hidden="true">
-      <div class="skeleton-line skeleton-line-lg"></div>
+      <div class="skeleton-header">
+        <span class="skeleton-pulse-dot"></span>
+        <span class="skeleton-caption">Estruturando síntese verificada e cruzando citações…</span>
+      </div>
+      <div class="skeleton-line skeleton-line-heading"></div>
       <div class="skeleton-line skeleton-line-full"></div>
+      <div class="skeleton-line skeleton-line-lg"></div>
       <div class="skeleton-line skeleton-line-md"></div>
       <div class="skeleton-line skeleton-line-sm"></div>
     </div>
@@ -851,6 +856,30 @@ function renderPipelineStatusBadge(status, details = {}) {
       ? `<button type="button" class="pipeline-stop-btn" data-stop-turn="${escapeHtml(details.turnId)}" title="Interromper geração imediatamente">■ Parar</button>`
       : '';
 
+  const progressPctMap = {
+    pending: 12,
+    searching: 28,
+    extracting: 62,
+    streaming: 88,
+    completed: 100
+  };
+  const progressPct = progressPctMap[status] || 0;
+
+  const subHintMap = {
+    pending: 'Inicializando pipeline de busca multipolar…',
+    searching: 'Consultando índices globais (US · CN · DE · JP · KR · RU · BR) e filtrando relevância…',
+    extracting: 'Extraindo texto principal das páginas com Readability (Early-Cutoff ativo)…',
+    streaming: 'Cruzando evidências verificadas e redigindo síntese com citações inline [1]…'
+  };
+  const subHintText = isRunning ? (subHintMap[status] || '') : '';
+  const subHintHtml = subHintText
+    ? `<div class="pipeline-subhint">${escapeHtml(subHintText)}</div>`
+    : '';
+
+  const progressBarHtml = isRunning
+    ? `<div class="pipeline-progress-track" role="progressbar" aria-label="Progresso da pesquisa e síntese" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progressPct}"><div class="pipeline-progress-fill" style="width: ${progressPct}%"></div></div>`
+    : '';
+
   const text = labelMap[status] || labelMap.pending;
 
   return `
@@ -861,7 +890,9 @@ function renderPipelineStatusBadge(status, details = {}) {
         ${liveTimerHtml}
         ${stopBtnHtml}
       </div>
+      ${subHintHtml}
       ${stepperHtml}
+      ${progressBarHtml}
     </div>
   `.trim();
 }
@@ -1413,11 +1444,11 @@ function renderFullPage({ conversations = [], activeConversation = null, envStat
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${escapeHtml(pageTitle)}</title>
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=deepevil-8">
-  <link rel="shortcut icon" href="/favicon.ico?v=deepevil-8">
-  <link rel="stylesheet" href="/styles.css?v=deepevil-8">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=deepevil-9">
+  <link rel="shortcut icon" href="/favicon.ico?v=deepevil-9">
+  <link rel="stylesheet" href="/styles.css?v=deepevil-9">
   <script src="/vendor/htmx.min.js" defer></script>
-  <script src="/app.js?v=deepevil-8" defer></script>
+  <script src="/app.js?v=deepevil-9" defer></script>
 </head>
 <body>
   <a href="#main-stage" class="skip-link">Pular para o conteúdo principal</a>
