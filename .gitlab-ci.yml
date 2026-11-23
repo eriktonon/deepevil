@@ -49,7 +49,7 @@ build_container:
     - docker build --pull=false -t deepevil:${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA} -t deepevil:stable .
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
-    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+    - if: $CI_COMMIT_TAG =~ /^(v\d+\.\d+\.\d+|stable)$/
 
 deploy_release:
   stage: deploy
@@ -60,6 +60,5 @@ deploy_release:
   script:
     - echo "Release ${CI_COMMIT_TAG:-stable} validated and ready for deployment (OLLAMA_MODEL=${OLLAMA_MODEL})"
   rules:
-    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
     - if: $CI_COMMIT_BRANCH == "main"
-      when: manual
+    - if: $CI_COMMIT_TAG =~ /^(v\d+\.\d+\.\d+|stable)$/

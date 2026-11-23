@@ -61,7 +61,7 @@ jobs:
 
       - name: Package release archive
         run: |
-          tar --exclude='.git' --exclude='node_modules' --exclude='data' -czf deepevil-${{ github.ref_name }}.tar.gz .
+          git archive --format=tar.gz --prefix=deepevil-${{ github.ref_name }}/ -o deepevil-${{ github.ref_name }}.tar.gz HEAD
           sha256sum deepevil-${{ github.ref_name }}.tar.gz > deepevil-${{ github.ref_name }}.tar.gz.sha256
 
       - name: Publish GitHub Release
