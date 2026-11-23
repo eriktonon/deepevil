@@ -24,6 +24,7 @@ function createDatabase(customDbPath) {
 
   const db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
+  db.pragma('busy_timeout = 5000');
   db.pragma('foreign_keys = ON');
   db.pragma('synchronous = NORMAL');
 
@@ -218,6 +219,53 @@ function createDatabase(customDbPath) {
     `)
   };
 
+  const normalizeSourceRow = (s) => ({
+    ...s,
+    citationIndex: s.citation_index ?? s.citationIndex,
+    wordCount: s.word_count ?? s.wordCount ?? 0,
+    charCount: s.char_count ?? s.charCount ?? 0,
+    siteName: s.site_name ?? s.siteName ?? s.domain
+  });
+
+  /**
+   * Busca em lote (1 consulta SQL com IN) todas as fontes de uma lista de turnos,
+   * eliminando o gargalo N+1 em getConversationWithTurns e getPriorCompletedTurns.
+   */
+  const groupSourcesByTurnIds = (turnIds) => {
+    const grouped = new Map();
+    if (!Array.isArray(turnIds) || turnIds.length === 0) return grouped;
+
+    const CHUNK_SIZE = 500;
+    for (let offset = 0; offset < turnIds.length; offset += CHUNK_SIZE) {
+      const slice = turnIds.slice(offset, offset + CHUNK_SIZE);
+      const placeholders = slice.map(() => '?').join(', ');
+      const rows = db
+        .prepare(
+          `SELECT * FROM sources WHERE turn_id IN (${placeholders}) ORDER BY turn_id ASC, citation_index ASC`
+        )
+        .all(...slice);
+
+      for (const row of rows) {
+        let bucket = grouped.get(row.turn_id);
+        if (!bucket) {
+          bucket = [];
+          grouped.set(row.turn_id, bucket);
+        }
+        bucket.push(normalizeSourceRow(row));
+      }
+    }
+    return grouped;
+  };
+
+  const resetTurnForRewriteTx = db.transaction((id, provider, model) => {
+    stmts.resetTurnForRewrite.run({
+      id,
+      provider: String(provider || ''),
+      model: String(model || '')
+    });
+    stmts.clearTurnTranslations.run(id);
+  });
+
   const saveTurnSourcesTx = db.transaction((turnId, sources) => {
     stmts.clearTurnSources.run(turnId);
     for (const src of sources) {
@@ -281,40 +329,25 @@ function createDatabase(customDbPath) {
 
     resetTurnForRewrite(turnId, { provider = '', model = '' } = {}) {
       const id = Number(turnId);
-      stmts.resetTurnForRewrite.run({
-        id,
-        provider: String(provider || ''),
-        model: String(model || '')
-      });
-      stmts.clearTurnTranslations.run(id);
+      resetTurnForRewriteTx(id, provider, model);
       return this.getTurn(id);
     },
 
     getTurn(turnId) {
       const turn = stmts.getTurn.get(Number(turnId));
       if (!turn) return null;
-      turn.sources = stmts.listSourcesByTurn.all(turn.id).map((s) => ({
-        ...s,
-        citationIndex: s.citation_index ?? s.citationIndex,
-        wordCount: s.word_count ?? s.wordCount ?? 0,
-        charCount: s.char_count ?? s.charCount ?? 0,
-        siteName: s.site_name ?? s.siteName ?? s.domain
-      }));
+      turn.sources = stmts.listSourcesByTurn.all(turn.id).map(normalizeSourceRow);
       return turn;
     },
 
     getConversationWithTurns(conversationId) {
       const conv = stmts.getConversation.get(Number(conversationId));
       if (!conv) return null;
-      const turns = stmts.listTurnsByConversation.all(conv.id).map((turn) => ({
+      const rawTurns = stmts.listTurnsByConversation.all(conv.id);
+      const sourcesByTurn = groupSourcesByTurnIds(rawTurns.map((t) => t.id));
+      const turns = rawTurns.map((turn) => ({
         ...turn,
-        sources: stmts.listSourcesByTurn.all(turn.id).map((s) => ({
-          ...s,
-          citationIndex: s.citation_index ?? s.citationIndex,
-          wordCount: s.word_count ?? s.wordCount ?? 0,
-          charCount: s.char_count ?? s.charCount ?? 0,
-          siteName: s.site_name ?? s.siteName ?? s.domain
-        }))
+        sources: sourcesByTurn.get(turn.id) || []
       }));
       return {
         ...conv,
@@ -326,19 +359,15 @@ function createDatabase(customDbPath) {
      * Retorna o histórico de turnos já concluídos para compor o contexto de follow-up.
      */
     getPriorCompletedTurns(conversationId, excludeTurnId = null) {
-      const turns = stmts.listTurnsByConversation.all(Number(conversationId));
-      return turns
-        .filter((t) => t.status === 'completed' && t.answer_markdown && t.id !== Number(excludeTurnId))
-        .map((t) => ({
-          ...t,
-          sources: stmts.listSourcesByTurn.all(t.id).map((s) => ({
-            ...s,
-            citationIndex: s.citation_index ?? s.citationIndex,
-            wordCount: s.word_count ?? s.wordCount ?? 0,
-            charCount: s.char_count ?? s.charCount ?? 0,
-            siteName: s.site_name ?? s.siteName ?? s.domain
-          }))
-        }));
+      const excludedId = excludeTurnId === null || excludeTurnId === undefined ? null : Number(excludeTurnId);
+      const completedTurns = stmts.listTurnsByConversation
+        .all(Number(conversationId))
+        .filter((t) => t.status === 'completed' && t.answer_markdown && t.id !== excludedId);
+      const sourcesByTurn = groupSourcesByTurnIds(completedTurns.map((t) => t.id));
+      return completedTurns.map((t) => ({
+        ...t,
+        sources: sourcesByTurn.get(t.id) || []
+      }));
     },
 
     saveTurnSources(turnId, sources) {
@@ -409,8 +438,24 @@ function createDatabase(customDbPath) {
       return this.getTurnTranslation(turnId, targetLang);
     },
 
+    checkpointAndClose() {
+      try {
+        if (db.open) {
+          db.pragma('wal_checkpoint(TRUNCATE)');
+        }
+      } catch (_) {
+        // Ignora erro caso :memory: ou banco já esteja fechado
+      } finally {
+        if (db.open) {
+          db.close();
+        }
+      }
+    },
+
     close() {
-      db.close();
+      if (db.open) {
+        db.close();
+      }
     }
   };
 }

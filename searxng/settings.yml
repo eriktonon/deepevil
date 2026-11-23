@@ -13,10 +13,11 @@ search:
     - json
 
 server:
-  secret_key: "perplexity-local-homelab-secret-key-searxng"
-  limiter: false
+  # Defina SEARXNG_SECRET no ambiente/.env (gere com: openssl rand -hex 32)
+  secret_key: "${SEARXNG_SECRET}"
+  limiter: true
   image_proxy: false
-  method: "GET"
+  method: "POST"
 
 engines:
   - name: yandex
@@ -24,4 +25,3 @@ engines:
     shortcut: ya
     disabled: false
     timeout: 4.5
-

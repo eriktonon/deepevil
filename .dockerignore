@@ -1,0 +1,15 @@
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+node_modules
+data/
+public/screenshots
+tests/
+*.log
+npm-debug.log*
+Dockerfile
+docker-compose.yml
+searxng/
+README.md

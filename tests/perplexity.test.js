@@ -382,7 +382,7 @@ test('4. Fluxo completo E2E (Express + htmx + SSE Streaming + SQLite + Follow-up
 
     assert.equal(askRes1.status, 200);
     const askHtml1 = await askRes1.text();
-    assert.match(askHtml1, /sse-connect="\/stream\/1"/);
+    assert.match(askHtml1, /data-stream-turn="1"/);
     assert.match(askHtml1, /Como funciona o isolamento no SQLite WAL\?/);
 
     // 4.2 Consome o stream SSE do turno 1 (/stream/1)
