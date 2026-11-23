@@ -7,7 +7,7 @@
 
 <p align="left">
   <strong>Architected by Erik Tonon</strong> · <strong>EdgeSearch &amp; PE-AGENTS-IBM Ecosystem</strong><br>
-  <em>7-Pole Worldwide Research Federation · 100% Local AI via Ollama (`eriktonon/granite4.2-uncensored` 32K &amp; 81+ Models) · Zero Telemetry · SQLite WAL + Qdrant Vector DB (`1024d` `bge-m3`)</em>
+  <em>7-Pole Worldwide Research Federation · 100% Local AI via Ollama (<code>eriktonon/deepseek-v4.1-flash-1017:9b</code> Primary Engine &amp; 81+ Models) · Zero Telemetry · SQLite WAL + Qdrant Vector DB (<code>1024d</code> <code>bge-m3</code>)</em>
 </p>
 
 ---
@@ -16,7 +16,7 @@
 
 O **DeepEvil (`v1.3.0`)** é um mecanismo de pesquisa técnica, científica, geopolítica e de engenharia (*Worldwide AI Answer Engine*) que roda **100% localmente** na sua máquina (`http://localhost:3000`), sem mensalidades de API e sem telemetria externa.
 
-Combinando uma **federação multipolar de 7 polos globais** (**DuckDuckGo Worldwide**, **Google News RSS**, **Wikipedia Multi-Idioma com deduplicação Cross-Lingual QID**, **OpenAlex 250M+ papers**, **ArXiv**, **GitHub API**, **HackerNews**, **Yandex + CyberLeninka Runet 3-Tier** e **SearXNG**) com modelos locais no **Ollama** (`eriktonon/granite4.2-uncensored`, `eriktonon/deepseek-v4.1-flash-1017:9b`, `eriktonon/gemma4-uncensored:12b`, `eriktonon/qwen3.8-uncensored:9b`), o DeepEvil extrai o conteúdo real das páginas via `@mozilla/readability` com *Early-Cutoff* rápido e gera sínteses verificadas em tempo real via **Server-Sent Events (SSE)** com citações `[1][2]` auditadas deterministicamente.
+Combinando uma **federação multipolar de 7 polos globais** (**DuckDuckGo Worldwide**, **Google News RSS**, **Wikipedia Multi-Idioma com deduplicação Cross-Lingual QID**, **OpenAlex 250M+ papers**, **ArXiv**, **GitHub API**, **HackerNews**, **Yandex + CyberLeninka Runet 3-Tier** e **SearXNG**) com modelos locais no **Ollama** liderados pelo **`eriktonon/deepseek-v4.1-flash-1017:9b`** (além de `eriktonon/qwen3.5-122b-uncensored:122b-a10b`, `eriktonon/gemma4-uncensored:12b`, `eriktonon/qwen3.8-uncensored:9b` e `eriktonon/granite4.2-uncensored`), o DeepEvil extrai o conteúdo real das páginas via `@mozilla/readability` com *Early-Cutoff* rápido e gera sínteses verificadas em tempo real via **Server-Sent Events (SSE)** com citações `[1][2]` auditadas deterministicamente.
 
 ---
 
@@ -71,8 +71,8 @@ A versão `v1.3.0` substitui os antigos tons azul-marinho por uma direção de a
 ### 2. Visão de Pesquisa & Síntese — Fontes Verificadas com Badges Âmbar-Champagne & Leitura `72ch` AAA
 ![DeepEvil 7-Pole Global Research](./public/screenshots/deepevil-p2p-research.png)
 
-### 3. Descoberta Direta de Repositórios Open-Source no GitHub
-![DeepEvil GitHub Repositories Discovery](./public/screenshots/deepevil-3d-github.png)
+### 3. Rodapé de Citações Verificadas, Trechos Extraídos & Barra de Ações Táticas
+![DeepEvil Verified Footnotes & Tactical Action Bar](./public/screenshots/deepevil-3d-github.png)
 
 ---
 
@@ -86,12 +86,13 @@ A versão `v1.3.0` substitui os antigos tons azul-marinho por uma direção de a
 ### Passo 1: Baixar o Modelo Local no Ollama
 
 ```bash
-# 1. Modelo principal rápido de 32K tokens
-ollama pull eriktonon/granite4.2-uncensored:latest
+# 1. Modelo principal recomendado (DeepSeek V4.1 Flash 1017 9B — Síntese Rápida & Alta Precisão)
+ollama pull eriktonon/deepseek-v4.1-flash-1017:9b
 
 # 2. (Opcional) Outros modelos recomendados da suíte eriktonon
-ollama pull eriktonon/deepseek-v4.1-flash-1017:9b
+ollama pull eriktonon/qwen3.5-122b-uncensored:122b-a10b
 ollama pull eriktonon/gemma4-uncensored:12b
+ollama pull eriktonon/granite4.2-uncensored:latest
 
 # 3. (Opcional) Embeddings semânticos 1024d para memória híbrida no Qdrant
 ollama pull bge-m3:latest
@@ -123,7 +124,7 @@ HOST=127.0.0.1
 
 SEARCH_PROVIDER=keyless
 OLLAMA_BASE_URL=http://127.0.0.1:11434
-OLLAMA_MODEL=eriktonon/granite4.2-uncensored:latest
+OLLAMA_MODEL=eriktonon/deepseek-v4.1-flash-1017:9b
 OLLAMA_NUM_CTX=32768
 MAX_CHARS_PER_SOURCE=5500
 ```

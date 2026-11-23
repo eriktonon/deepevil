@@ -1,0 +1,75 @@
+name: DeepEvil CI & Stable Release Pipeline
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*.*.*"
+      - "stable"
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  validate-and-test:
+    name: Validate, AppSec & Golden Test Suite (43/43)
+    runs-on: ubuntu-latest
+    env:
+      NODE_ENV: test
+      OLLAMA_MODEL: eriktonon/deepseek-v4.1-flash-1017:9b
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22 LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate syntax across core modules
+        run: |
+          node --check src/server.js
+          node --check src/search.js
+          node --check src/extractor.js
+          node --check src/llm.js
+          node --check src/render.js
+          node --check src/db.js
+          node --check src/qdrant.js
+
+      - name: Run full test suite (Golden Eval, Multipolar Search, WCAG & AppSec)
+        run: npm test
+
+      - name: Verify Docker image build
+        run: docker build -t deepevil:${{ github.ref_name }} .
+
+  publish-release:
+    name: Publish Stable GitHub Release
+    needs: validate-and-test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Package release archive
+        run: |
+          tar --exclude='.git' --exclude='node_modules' --exclude='data' -czf deepevil-${{ github.ref_name }}.tar.gz .
+          sha256sum deepevil-${{ github.ref_name }}.tar.gz > deepevil-${{ github.ref_name }}.tar.gz.sha256
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          prerelease: false
+          make_latest: true
+          files: |
+            deepevil-${{ github.ref_name }}.tar.gz
+            deepevil-${{ github.ref_name }}.tar.gz.sha256

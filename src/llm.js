@@ -1572,12 +1572,12 @@ async function streamFromOllama({
     try {
       let response = await sendWithAutoWake();
 
-      // Fallback transparente entre aliases locais (:latest / :8b) e o campeão local instalado no Ollama
-      if (response.statusCode === 404 && /granite4\.2-uncensored/i.test(model)) {
+      // Fallback transparente priorizando o campeão local eriktonon/deepseek-v4.1-flash-1017:9b
+      if (response.statusCode === 404 && /(?:granite4\.2-uncensored|deepseek-v4\.1)/i.test(model)) {
         const fallbackCandidates = [
+          'eriktonon/deepseek-v4.1-flash-1017:9b',
           model === 'granite4.2-uncensored:latest' ? 'eriktonon/granite4.2-uncensored:latest' : 'granite4.2-uncensored:latest',
-          'eriktonon/granite4.2-uncensored:8b',
-          'eriktonon/deepseek-v4.1-flash-1017:9b'
+          'eriktonon/granite4.2-uncensored:8b'
         ];
         for (const altModel of fallbackCandidates) {
           if (response.statusCode !== 404) break;

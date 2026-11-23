@@ -1,15 +1,22 @@
-version: '3.8'
-
 services:
   searxng:
-    image: searxng/searxng:latest
+    # Tag versionada pinada (sem :latest) para determinismo e governança de CVE
+    image: searxng/searxng:2025.2.15-4a3474f0e
     container_name: perplexity_searxng
     ports:
       - "127.0.0.1:${SEARXNG_PORT:-8888}:8080"
     volumes:
-      - ./searxng:/etc/searxng:rw
+      - ./searxng:/etc/searxng:ro
     environment:
-      - SEARXNG_BASE_URL=http://localhost:8888/
+      - SEARXNG_BASE_URL=http://localhost:${SEARXNG_PORT:-8888}/
+      # Gere com `openssl rand -hex 32` e defina SEARXNG_SECRET no .env
+      - SEARXNG_SECRET=${SEARXNG_SECRET:-}
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    pids_limit: 128
     restart: unless-stopped
 
   perplexity_local:
@@ -19,27 +26,39 @@ services:
       - searxng
     ports:
       - "127.0.0.1:${HOST_PORT:-8240}:3000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - PORT=3000
       - HOST=0.0.0.0
+      - HOST_PORT=${HOST_PORT:-8240}
+      - ALLOW_DOCKER_BRIDGE=true
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS:-localhost:8240,127.0.0.1:8240,perplexity_local:3000,perplexity_local}
       - DB_PATH=/app/data/perplexity.sqlite
       - SEARCH_PROVIDER=${SEARCH_PROVIDER:-searxng}
       - SEARXNG_URL=${SEARXNG_URL:-http://searxng:8080}
       - BRAVE_SEARCH_API_KEY=${BRAVE_SEARCH_API_KEY:-}
       - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-eriktonon/granite4.2-uncensored:latest}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-eriktonon/deepseek-v4.1-flash-1017:9b}
       - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-32768}
       - MAX_CHARS_PER_SOURCE=${MAX_CHARS_PER_SOURCE:-5500}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
     volumes:
       - perplexity_sqlite_data:/app/data
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 1g
+    pids_limit: 256
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:3000/health || exit 1"]
-      interval: 10s
-      timeout: 3s
+      interval: 15s
+      timeout: 5s
+      start_period: 15s
       retries: 3
 
 volumes:

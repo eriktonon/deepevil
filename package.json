@@ -1,7 +1,7 @@
 {
   "name": "deepevil",
   "version": "1.3.0",
-  "description": "DeepEvil — Worldwide Research & Local AI Answer Engine powered by Ollama (IBM Granite 4.2 Uncensored 32K), Global Federation (ArXiv, OpenAlex, Wikipedia EN, GitHub, HN), Mozilla Readability, SQLite WAL and Qdrant Vector DB",
+  "description": "DeepEvil v1.3.0 — Worldwide Research & Local AI Answer Engine powered by Ollama (DeepSeek V4.1 Flash 1017 9B & 81+ Models), 7-Pole Global Federation (ArXiv, OpenAlex, Wikipedia QID, GitHub, HN, Yandex/CyberLeninka), Mozilla Readability, SQLite WAL and Qdrant Vector DB",
   "author": "Erik Tonon",
   "license": "Apache-2.0",
   "repository": {
